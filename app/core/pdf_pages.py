@@ -1,9 +1,9 @@
 from pathlib import Path
 import fitz
 
+from core.config import OCR_TMP_DIR, USE_OCR
 from core.pdf_text import extract_text_from_pdf
 from core.ocr_service import run_ocr
-from core.config import OCR_TMP_DIR, USE_OCR
 from core.classifier import extract_basic_fields
 
 
@@ -47,7 +47,7 @@ def analizar_paginas_pdf(pdf_path: Path) -> list[dict]:
             "text": text,
             "fields": fields,
             "tipo_documental": fields.get("tipo_documental"),
-            "oc": fields.get("oc"),
+            "oc": fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero"),
             "fuente": fuente,
             "temp_pdf": temp_page,
         })

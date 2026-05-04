@@ -1,8 +1,15 @@
-
-
-$ ls -l data/salida/2026/BBTEC/01/sin_oc/
-total 147268
--rw-r--r-- 1 BBTI 01 197121  205496 Feb  6 16:45 'BBTEC FACTURA F0M2 9567 20606109343 SOLANA_COMERCIAL_S_A_C.pdf'
--rw-r--r-- 1 BBTI 01 197121   66811 Feb 13 15:05 'BBTEC FACTURA F0M3 6175 20606109343 SOLANA_COMERCIAL_S_A_C.pdf'
--rw-r--r-- 1 BBTI 01 197121 956001 Jan 23 19:02 'data/salida/2026/BBTEC/01/sin_oc/BBTEC FACTURA F001 83 10705698592 BECERRA_YANTAS_CESAR_JUNIOR.pdf'
-
+error:
+BBTI 01@PROGRAMACION MINGW64 /c/d/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python app/process_batch.py --year 2026 --month 1 --cliente BBTEC
+Carpeta entrada: C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\entrada\2026\BBTEC\01
+PDF encontrados: 387
+[1/387] Procesando: 04-0001 E001 162 10804262119 LEGUIA DAMIANO WILVER.pdf
+Traceback (most recent call last):
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\process_batch.py", line 466, in <module>
+    main()
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\process_batch.py", line 290, in main
+    fields = extract_basic_fields(text, f"page_{index + 1}.pdf")
+                                                ^^^^^
+NameError: name 'index' is not defined
+(.venv)
+el codigo actual: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/process_batch.py
