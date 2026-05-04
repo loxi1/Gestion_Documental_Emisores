@@ -2,8 +2,8 @@ import os
 import shutil
 from pathlib import Path
 
-BASE_SOURCE = Path("/y/PROCESAR/6 PERIODO 2026")
-BASE_TARGET = Path("data")
+BASE_SOURCE = Path(r"Y:\PROCESAR\6 PERIODO 2026")
+BASE_TARGET = Path("data/entrada")
 
 EMPRESAS_MAP = {
     "BB TECNOLOGIA": "BBTEC",
