@@ -1,1 +1,2 @@
 con toda las mejoras mencionada dime los cambios a realizar siendo el codigo actual: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/process_batch.py
+si deseas verifica todo el repo: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/
