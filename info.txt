@@ -1,81 +1,21 @@
-Ahora necesito acceder a una carpeta compartida de windows los accesos son usuario: SERVBBTI\sistemas clave: 515t3mbbt1@dm
-estructura de carpetas:
-BBTI 01@PROGRAMACION MINGW64 /y
-$ pwd
-/y
-$ cd PROCESAR/
+Error:
+BBTI 01@PROGRAMACION MINGW64 /c/d/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ source .venv/Scripts/activate
+(.venv) 
+BBTI 01@PROGRAMACION MINGW64 /c/d/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python copiar_local.py
+Traceback (most recent call last):
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\copiar_local.py", line 73, in <module>
+    copiar_estructura()
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\copiar_local.py", line 40, in copiar_estructura
+    for empresa_dir in BASE_SOURCE.iterdir():
+  File "C:\Users\BBTI 01\.pyenv\pyenv-win\versions\3.11.9\Lib\pathlib.py", line 931, in iterdir
+    for name in os.listdir(self):
+                ^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 3] El sistema no puede encontrar la ruta especificada: '\\y\\PROCESAR\\6 PERIODO 2026'
+(.venv) 
 
-BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR
-$ ls -l
-total 0
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:29 '6 PERIODO 2026'/
-
-BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR
-$ ls -l 6\ PERIODO\ 2026/
-total 0
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:25 'BB TECNOLOGIA'/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:26 'CIMA ENERGY'/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:27  HUANCAVELICA/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:28  ILUMINACION/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:29  KIMBIRI/
-
-BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR
-$ ls -l 6\ PERIODO\ 2026/BB\ TECNOLOGIA/
-total 544
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:23 1_ENERO-2026/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:24 2_FEBRERO-2026/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:25 3_MARZO-2026/
-drwxr-xr-x 1 BBTI 01 197121 0 Apr 28 16:25 4_ABRIL-2026/
-
-BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR
-$ ls -l 6\ PERIODO\ 2026/BB\ TECNOLOGIA/1_ENERO-2026/
-total 179444
--rw-r--r-- 1 BBTI 01 197121  694676 Jan  8 14:52 '04-0001 E001 162 10804262119 LEGUIA DAMIANO WILVER.pdf'
-...
-
-vamos a probar en esta carpeta:
 BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR/6 PERIODO 2026/BB TECNOLOGIA/1_ENERO-2026
 $ pwd
 /y/PROCESAR/6 PERIODO 2026/BB TECNOLOGIA/1_ENERO-2026
-
-Los documento tienen el mombre o nomenclatura de una factura dentro del pdf exista almenos un archivo y es la factura. ahora yo puedo acceder como una carpeta Y pero cuando este en el servidor futuro de ubuntu. quiero procesar de esta manera quiero copiar el archivo a una carpeta 2026 dentro de PROCESAR internamete pongo las empresas de donde se emitieron las ordenes de compra es especial la abreviatura dentro se puede poner el mes que me recomiendas el nombre del mes o 01, 02, etc... considerar que vamos a procesar un mes en especifico(alguien manualmente lo valido) este mes esta contenida por la empresa emisora del documento de compra y este a su vez esta contenida en 6 PERIODO 2026 para mi solo es 2026 contabilida porque le habra puesto este nombre pero bueno mi idea es copiar los documentos individuales dentro de 2026/BBTEC/MES/*
-actualmente los archivos o carpetas:
-$ ls -l 6\ PERIODO\ 2026/
-total 0
-'BB TECNOLOGIA'/ ->  BBTEC
-'CIMA ENERGY'/ -> CIMA
-HUANCAVELICA/ -> HUANCA
-ILUMINACION/ -> TARMA
-KIMBIRI/ -> KIMBIRI
-
-BBTI 01@PROGRAMACION MINGW64 /y/PROCESAR
-$ ls -l 6\ PERIODO\ 2026/BB\ TECNOLOGIA/
-total 544
-1_ENERO-2026/ -> ENERO
-2_FEBRERO-2026/ -> FEBREO
-3_MARZO-2026/ -> MARZO
-4_ABRIL-2026/ -> ABRIL
-
-gestiondocumental_mvp=# select * from clientes_destino;
- id |          nombre_oficial          | abreviatura |     ruc     |                      ruta_windows                      |
- descripcion   | estado |         creado_en          |       actualizado_en
-----+----------------------------------+-------------+-------------+--------------------------------------------------------+--
----------------+--------+----------------------------+----------------------------
-  1 | BB TECNOLOGIA INDUSTRIAL S.A.C.  | BBTEC       | 20299922821 | \\servidor\documentos\BB TECNOLOGIA INDUSTRIAL SAC     | E
-mpresa destino | t      | 2026-05-04 12:22:32.986575 | 2026-05-04 12:22:32.986575
-  2 | BBTI S.A.C.                      | BBTI        | 20565747356 | \\servidor\documentos\BBTI SAC                         | E
-mpresa destino | t      | 2026-05-04 12:22:32.986575 | 2026-05-04 12:22:32.986575
-  3 | CONSORCIO CIMA ENERGY            | CIMA        | 20613521004 | \\servidor\documentos\CONSORCIO CIMA ENERGY            | C
-onsorcio       | t      | 2026-05-04 12:22:32.986575 | 2026-05-04 12:22:32.986575
-  4 | CONSORCIO ILUMINACION TARMA 2025 | TARMA       | 20614307197 | \\servidor\documentos\CONSORCIO ILUMINACION TARMA 2025 | C
-onsorcio       | t      | 2026-05-04 12:22:32.986575 | 2026-05-04 12:22:32.986575
-  5 | CONSORCIO HUANCAVELICA           | HUANCA      | 20612122416 | \\servidor\documentos\CONSORCIO HUANCAVELICA           | C
-onsorcio       | t      | 2026-05-04 12:22:32.986575 | 2026-05-04 12:22:32.986575
-  6 | Consorcio Kimbiri                | KIMBIRI     | 20609856140 | KIMBIRI                                                | C
-ONSORCIO       | t      | 2026-05-04 13:26:13.185296 | 2026-05-04 13:26:13.185296
-(6 rows)
-
-
-gestiondocumental_mvp=#
-
 
