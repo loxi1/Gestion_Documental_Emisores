@@ -14,6 +14,7 @@ from core.qr_parser import parse_qr_payload
 from core.classifier import extract_basic_fields, normalize_amount
 from core.dates import parse_iso_date
 from core.file_manager import sha256_file, copy_file, build_final_name
+from core.pdf_pages import analizar_paginas_pdf
 from core.repositories import (
     find_cliente_by_ruc,
     find_cliente_by_text,

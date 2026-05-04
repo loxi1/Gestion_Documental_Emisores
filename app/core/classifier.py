@@ -156,6 +156,10 @@ def extract_basic_fields(text: str, file_name: str) -> dict[str, Any]:
     name_u = normalize_text(file_name)
     doc_type = detect_tipo_documental(text, file_name)
 
+    # 🔥 FALLBACK SI NO DETECTA
+    if doc_type == "otro":
+        doc_type = detectar_tipo_por_nombre(file_name)
+
     qr_data = None
     for candidate in extract_qr_candidates(text):
         qr_data = parse_qr_payload(candidate)
@@ -172,7 +176,7 @@ def extract_basic_fields(text: str, file_name: str) -> dict[str, Any]:
             "importe": qr_data.get("importe"),
             "igv": qr_data.get("igv"),
             "oc": None,
-            "qr_data": qr_data,
+            "qr_data": qr_data
         }
 
     serie = numero = None
@@ -190,9 +194,35 @@ def extract_basic_fields(text: str, file_name: str) -> dict[str, Any]:
         "serie": serie,
         "numero": numero,
         "ruc": _extract_ruc_proveedor(text_u, doc_type, name_u),
+        "razon_social": _extract_razon_from_filename(file_name),
         "fecha_emision": _extract_fecha(text_u),
         "importe": _extract_importe(text_u),
         "igv": None,
         "oc": oc_num,
         "qr_data": qr_data,
     }
+
+
+def detectar_tipo_por_nombre(filename: str) -> str:
+    nombre = filename.upper()
+
+    # Facturas: F001, F005, FE01, FT01, E001, F0M3, etc.
+    if re.search(r"\b(F[A-Z0-9]{2,4}|E[A-Z0-9]{2,4}|FE\d{2}|FT\d{2})\s+\d+\b", nombre):
+        return "factura"
+
+    return "otro"
+
+def _extract_razon_from_filename(file_name: str):
+    import re
+    name = file_name.replace(".pdf", "").replace(".PDF", "").strip()
+
+    m = re.search(
+        r"^\d{2}-\d{4}\s+\S+\s+\S+\s+((?:10|20)\d{9})\s+(.+)$",
+        name,
+        re.IGNORECASE
+    )
+
+    if m:
+        return m.group(2).strip()
+
+    return None
