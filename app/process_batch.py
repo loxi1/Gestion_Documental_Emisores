@@ -22,6 +22,7 @@ from core.repositories import (
 
 
 def should_use_qr(fields: dict) -> bool:
+    return False
     tipo = fields.get("tipo_documental")
 
     if tipo not in ("factura", "guia_remision"):
@@ -286,7 +287,11 @@ def main() -> None:
 
     lote = create_lote(len(pdfs), input_dir)
 
-    docs = [enrich_pdf(pdf) for pdf in pdfs]
+    docs = []
+
+    for i, pdf in enumerate(pdfs, start=1):
+        print(f"[{i}/{len(pdfs)}] Analizando: {pdf.name}", flush=True)
+        docs.append(enrich_pdf(pdf))
 
     factura_principal = next(
         (d for d in docs if d["fields"].get("tipo_documental") == "factura"),
@@ -322,6 +327,7 @@ def main() -> None:
     grupo_cache = {}
 
     for doc in docs:
+        print(f"[PROCESANDO] {doc['path'].name}")
         fields = doc["fields"]
         tipo = fields.get("tipo_documental")
         valido = is_valid_document(fields)
