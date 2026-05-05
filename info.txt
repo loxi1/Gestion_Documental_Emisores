@@ -1,15 +1,72 @@
-error:
-BBTI 01@PROGRAMACION MINGW64 /c/d/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
-$ python app/process_batch.py --year 2026 --month 1 --cliente BBTEC
-Carpeta entrada: C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\entrada\2026\BBTEC\01
-PDF encontrados: 387
-[1/387] Procesando: 04-0001 E001 162 10804262119 LEGUIA DAMIANO WILVER.pdf
-Traceback (most recent call last):
-  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\process_batch.py", line 466, in <module>
-    main()
-  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\process_batch.py", line 290, in main
-    fields = extract_basic_fields(text, f"page_{index + 1}.pdf")
-                                                ^^^^^
-NameError: name 'index' is not defined
-(.venv)
-el codigo actual: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/process_batch.py
+Primero analiza esto:
+gestiondocumental_mvp=# select * from grupos_documentales where id in (176,177,178);
+ id  | lote_id |     grupo_codigo     | cliente_destino_id | factura_documento_id |  estado   | observacion |         creado_en
+          |       actualizado_en       | clave_grupo | tipo_grupo | orden_compra
+-----+---------+----------------------+--------------------+----------------------+-----------+-------------+------------------
+----------+----------------------------+-------------+------------+--------------
+ 176 |         | BBTEC OC 00063019240 |                    |                      | pendiente |             | 2026-05-05 11:10:
+49.350675 | 2026-05-05 11:10:49.350675 |             |            |
+ 177 |         | BBTEC OC 034         |                    |                      | pendiente |             | 2026-05-05 11:10:
+49.604562 | 2026-05-05 11:10:49.604562 |             |            |
+ 178 |         | BBTEC OC 000228      |                    |                      | pendiente |             | 2026-05-05 11:10:
+50.282914 | 2026-05-05 11:10:50.282914 |             |            |
+(3 rows)
+
+
+gestiondocumental_mvp=# select * from documentos where grupo_id in (176,177,178);
+ id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie |  numero  | ruc_emisor  |
+  razon_social_emisor                | fecha_emision | importe | igv |  oc_numero  |  estado_documento  | observacion |
+                          nombre_original                                   |                                        nombre_fin
+al                                        | ruta_origen |
+                     ruta_destino                                                                                            |
+                          hash_sha256                            | paginas | es_principal | qr_raw |         creado_en
+ |       actualizado_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_docu
+mentos_detectados | oc_detectada_en_paginas | requiere_split
+-----+---------+----------+--------------------+--------------+-----------------+-------+----------+-------------+-------------
+-------------------------------------+---------------+---------+-----+-------------+--------------------+-------------+--------
+----------------------------------------------------------------------------+--------------------------------------------------
+------------------------------------------+-------------+----------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------+-
+-----------------------------------------------------------------+---------+--------------+--------+---------------------------
+-+----------------------------+----------+--------------+-------------------+-----------------+--------------------+-----------
+------------------+-------------------------+----------------
+ 194 |         |      176 |                    |              | factura         |       |          | 20101635873 | SIM CONTRATI
+STAS GENERALES E.I.R.L.              |               |         |     | 00063019240 | revision_manual    |             | 04-0194
+ E001 754 20101635873 SIM CONTRATISTAS GENERALES E.I.R.L..pdf               | BBTEC_OC_00063019240_- FACTURA 20101635873 SIM_CO
+NTRATISTAS_GENERALES_E_I_R_L.pdf          |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
+ida\2026\BBTEC\01\revision_manual\BBTEC_OC_00063019240_- FACTURA 20101635873 SIM_CONTRATISTAS_GENERALES_E_I_R_L.pdf          |
+befc5adb06d3fddced96f558ec0bdd1f7c04c91ac364b21341386e0dff33b66e |       3 | f            |        | 2026-05-05 11:10:49.350675
+ | 2026-05-05 11:10:49.350675 | t        |              | f                 |                 | f                  |
+                1 |                         | f
+ 195 |         |      177 |                    |              | factura         | F001  | 00005175 | 20383086702 | MANTENIMIENT
+O Y SUPERVISION S.A.                 |               |         |     | 034         | clasificado_con_oc |             | 04-0195
+ F001 5175 20383086702 MANTENIMIENTO Y SUPERVISION S.A..pdf                 | BBTEC_OC_034_- FACTURA F001 00005175 20383086702
+MANTENIMIENTO_Y_SUPERVISION_S_A.pdf       |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
+ida\2026\BBTEC\01\con_oc\BBTEC_OC_034_- FACTURA F001 00005175 20383086702 MANTENIMIENTO_Y_SUPERVISION_S_A.pdf                |
+5691a1635b14a25c6fcdf3ffd9e4452886e90c8412283f3a042ad7cadcee8c96 |       3 | f            |        | 2026-05-05 11:10:49.604562
+ | 2026-05-05 11:10:49.604562 | t        |              | f                 |                 | f                  |
+                1 |                         | f
+ 197 |         |      178 |                    |              | factura         |       |          | 20541464264 | EMP DE MANTE
+NIMIENTO MONTAJES Y SERV M┌LTIPLES F |               |         |     | 000228      | revision_manual    |             | 04-0197
+ E001 1085 20541464264 EMP DE MANTENIMIENTO MONTAJES Y SERV M┌LTIPLES F.pdf | BBTEC_OC_000228_- FACTURA 20541464264 EMP_DE_MANT
+ENIMIENTO_MONTAJES_Y_SERV_MULTIPLES_F.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
+ida\2026\BBTEC\01\revision_manual\BBTEC_OC_000228_- FACTURA 20541464264 EMP_DE_MANTENIMIENTO_MONTAJES_Y_SERV_MULTIPLES_F.pdf |
+22cc1181ff0a27a3683c90866b34f1fdae2ab0b08ad23713710d34eaa05ec853 |       8 | f            |        | 2026-05-05 11:10:50.282914
+ | 2026-05-05 11:10:50.282914 | t        |              | f                 |                 | f                  |
+                1 |                         | f
+(3 rows)
+
+$ ls -l data/salida/2026/BBTEC/01/con_oc/
+total 444
+-rw-r--r-- 1 BBTI 01 197121  60244 may.  5 11:10 'BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121  61768 may.  5 11:10 'BBTEC_OC_00063019240_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121  38011 may.  5 11:10 'BBTEC_OC_00063019240_- ORDEN_COMPRA SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121 223756 feb.  4 09:23 'BBTEC_OC_034_- FACTURA F001 00005175 20383086702 MANTENIMIENTO_Y_SUPERVISION_S_A.pdf'
+-rw-r--r-- 1 BBTI 01 197121  61437 may.  5 11:10 'BBTEC_OC_034_- PAGO SIN_RAZON_SOCIAL.pdf'
+(.venv) 
+
+
+archivos validar:
+https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/core/classifier.py
+
+https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/process_batch.py

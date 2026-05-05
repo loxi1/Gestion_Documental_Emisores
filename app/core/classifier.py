@@ -71,6 +71,9 @@ def detect_tipo_documental(text: str, file_name: str) -> str:
 
     if "PAGO" in compact and re.search(r"\b(OP|OPERACION|OPERACION N|NRO)\b", text_u):
         return "pago"
+    
+    if "ORDEN DE SERVICIO" in text_u or re.search(r"\bN[°º:]?\s*0*\d{3,8}\b", text_u):
+        return "orden_compra"
 
     return "otro"
 
@@ -91,18 +94,19 @@ def _extract_guia_fields(text_u: str, name_u: str) -> tuple[str | None, str | No
     return None, None
 
 
-def _extract_oc_fields(text_u: str, name_u: str) -> tuple[str | None, str | None]:
-    fuentes = f"{text_u}\n{name_u}"
-    patrones = [
-        r"ORDEN\s+DE\s+COM\w{0,4}.{0,120}?([0-9]{4,})",
-        r"OC\s*BBTI.{0,80}?([0-9]{4,})",
-        r"\bOC[:\s-]*([0-9]{4,})\b",
-        r"\b([0-9]{4,})\.PDF\b",
-    ]
-    for patron in patrones:
-        m = re.search(patron, fuentes, re.I | re.S)
-        if m and 4 <= len(m.group(1)) <= 8:
-            return "OC", m.group(1)
+def _extract_oc_fields(text_u: str, name_u: str):
+    m = re.search(r"ORDEN\s+DE\s+COMPRA[:\s]*(0*\d{3,10})", text_u)
+    if m:
+        return None, m.group(1)
+
+    m = re.search(r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(0*\d{3,10})", text_u, re.S)
+    if m:
+        return None, m.group(1)
+
+    m = re.search(r"\bN[°º:]?\s*(0*\d{3,10})", text_u)
+    if "ORDEN DE SERVICIO" in text_u and m:
+        return None, m.group(1)
+
     return None, None
 
 

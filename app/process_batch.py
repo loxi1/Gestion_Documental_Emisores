@@ -287,7 +287,7 @@ def main():
         print(f"[{i}/{len(pdfs)}] Procesando: {pdf.name}")
 
         text = extract_text_from_pdf(pdf)
-        fields = extract_basic_fields(text, f"page_{index + 1}.pdf")
+        fields = extract_basic_fields(text, pdf.name)
 
         pages = count_pages(pdf)
 

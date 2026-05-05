@@ -40,7 +40,7 @@ def analizar_paginas_pdf(pdf_path: Path) -> list[dict]:
                 text = extract_text_from_pdf(ocr_page)
                 fuente = "ocr"
 
-        fields = extract_basic_fields(text, pdf_path.name)
+        fields = extract_basic_fields(text, f"page_{index + 1}.pdf")
 
         result.append({
             "page": index + 1,
