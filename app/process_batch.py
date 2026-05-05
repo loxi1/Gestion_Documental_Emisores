@@ -306,7 +306,14 @@ def main():
             oc_global = next((p["oc"] for p in paginas_info if p.get("oc")), None)
 
             if oc_global:
-                fields["oc"] = oc_global
+                fields["oc"] = normalizar_oc(oc_global)
+                fields["orden_compra"] = oc_global
+
+                # 🔥 FORZAR ESTADO
+                tipo = fields.get("tipo_documental")
+
+                if tipo == "factura":
+                    valido = True
 
         tipo = fields.get("tipo_documental")
 
@@ -461,6 +468,10 @@ def main():
 
     print("Proceso finalizado.")
 
+def normalizar_oc(oc):
+    if not oc:
+        return None
+    return str(int(oc)).zfill(6)
 
 if __name__ == "__main__":
     main()

@@ -95,18 +95,24 @@ def _extract_guia_fields(text_u: str, name_u: str) -> tuple[str | None, str | No
 
 
 def _extract_oc_fields(text_u: str, name_u: str):
-    m = re.search(r"ORDEN\s+DE\s+COMPRA[:\s]*(0*\d{3,10})", text_u)
+    import re
+
+    # ORDEN DE SERVICIO
+    m = re.search(r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(\d{3,10})", text_u, re.S)
     if m:
-        return None, m.group(1)
+        return None, m.group(1).zfill(6)
 
-    m = re.search(r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(0*\d{3,10})", text_u, re.S)
+    # ORDEN DE COMPRA directa
+    m = re.search(r"ORDEN\s+DE\s+COMPRA[:\s]*(\d{3,10})", text_u)
     if m:
-        return None, m.group(1)
+        return None, m.group(1).zfill(6)
 
-    m = re.search(r"\bN[°º:]?\s*(0*\d{3,10})", text_u)
-    if "ORDEN DE SERVICIO" in text_u and m:
-        return None, m.group(1)
+    # PPTO (presupuesto como OC válida)
+    m = re.search(r"PPTO\s*N[°º]?\s*(\d+)", text_u)
+    if m:
+        return None, m.group(1).zfill(3)
 
+    # fallback seguro
     return None, None
 
 
