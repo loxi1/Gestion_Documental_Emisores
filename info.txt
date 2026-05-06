@@ -1,199 +1,212 @@
-gestiondocumental_mvp=# select * from documentos_internos;
- id | documento_id | grupo_id | tipo_documental | paginas | orden_compra |                      nombre_exportado
-    |                                                                      ruta_exportada
-                             | estado |         creado_en
-----+--------------+----------+-----------------+---------+--------------+---------------------------------------------------------
-----+------------------------------------------------------------------------------------------------------------------------------
------------------------------+--------+----------------------------
-  1 |          194 |      176 | orden_compra    | 2       | 6301924      | BBTEC_OC_6301924_- ORDEN_COMPRA 000008 SIN_RAZON_SOCIAL.
-pdf | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_6301924_- ORDEN_COMPRA
- 000008 SIN_RAZON_SOCIAL.pdf |        | 2026-05-06 10:52:07.189311
-  2 |          194 |      176 | orden_compra    | 3       | 6301924      | BBTEC_OC_6301924_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf
-    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_6301924_- ORDEN_COMPRA
- 008 SIN_RAZON_SOCIAL.pdf    |        | 2026-05-06 10:52:07.189311
-  3 |          195 |      177 | pago            | 2       |              | BBTEC_OC_None_- PAGO SIN_RAZON_SOCIAL.pdf
-    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_None_- PAGO SIN_RAZON_
-SOCIAL.pdf                   |        | 2026-05-06 10:52:07.450231
-  4 |          197 |      178 | pago            | 2       | 000228       | BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf
-    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_000228_- PAGO SIN_RAZO
-N_SOCIAL.pdf                 |        | 2026-05-06 10:52:08.036356
-(4 rows)
+Sí. Revisé tu process_batch.py y classifier.py actuales; el problema principal es que siempre exportabas internos a con_oc, incluso con OC None, y el clasificador estaba tomando números incorrectos como OC. �
+GitHub +1
+1. app/core/classifier.py
+Reemplaza estas funciones:
+Python
+def detect_tipo_documental(text: str, file_name: str) -> str:
+    text_u = normalize_text(text)
+    name_u = normalize_text(file_name)
+    compact = compact_text(text_u + " " + name_u)
+
+    for candidate in extract_qr_candidates(text):
+        qr = parse_qr_payload(candidate)
+        if qr and qr.get("tipo_documental") in ("factura", "guia_remision"):
+            return qr["tipo_documental"]
+
+    if (
+        "FACTURAELECTRONICA" in compact
+        or re.search(rf"\b{FACTURA_SERIE_RE}\s*[- ]\s*{FACTURA_NUMERO_RE}\b", text_u)
+        or re.search(rf"\b{FACTURA_SERIE_RE}\s*[- ]\s*{FACTURA_NUMERO_RE}\b", name_u)
+    ):
+        return "factura"
+
+    if (
+        "GUIADEREMISION" in compact
+        or "GUIADEREMISIONREMITENTE" in compact
+        or re.search(rf"\b{GUIA_SERIE_RE}\s*[- ]\s*{GUIA_NUMERO_RE}\b", text_u)
+    ):
+        return "guia_remision"
+
+    if "ORDENDESERVICIO" in compact or "ORDENDECOMPRA" in compact:
+        return "orden_compra"
+
+    if "NOTAINGRESO" in compact:
+        return "nota_ingreso"
+
+    if "PRESUPUESTO" in compact or "PPTO" in compact:
+        return "presupuesto"
+
+    if "PAGO" in compact or "TRANSFERENCIA" in compact or "OPERACION" in compact:
+        return "pago"
+
+    return detectar_tipo_por_nombre(file_name)
 
 
-gestiondocumental_mvp=# select * from documentos_procesados;
- id | hash_sha256 | archivo_original | archivo_renombrado | ruta_origen | ruta_destino | tipo_documento | serie | numero | ruc_emis
-or | razon_social_emisor | fecha_emision | importe_total | cliente_destino_id | cliente_abreviatura | asiento_contable | grupo_docu
-mental | estado | observacion | datos_extraidos | creado_en | actualizado_en | lote_id | grupo_id | orden_compra | tiene_oc | fuent
-e_datos | requiere_revision | motivo_revision
-----+-------------+------------------+--------------------+-------------+--------------+----------------+-------+--------+---------
----+---------------------+---------------+---------------+--------------------+---------------------+------------------+-----------
--------+--------+-------------+-----------------+-----------+----------------+---------+----------+--------------+----------+------
---------+-------------------+-----------------
-(0 rows)
+def _extract_oc_fields(text_u: str, name_u: str):
+    # Orden de servicio: solo si aparece el contexto correcto
+    m = re.search(
+        r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(\d{3,10})",
+        text_u,
+        re.I | re.S,
+    )
+    if m:
+        return None, m.group(1).zfill(6)
+
+    # Orden de compra explícita
+    m = re.search(
+        r"ORDEN\s+DE\s+COMPRA[:\s]*(\d{3,10})",
+        text_u,
+        re.I,
+    )
+    if m:
+        return None, m.group(1).zfill(6)
+
+    # OC / O-C explícito
+    m = re.search(
+        r"\bO[/\-]?\s*C[:\s\-]*(\d{3,10})\b",
+        text_u + " " + name_u,
+        re.I,
+    )
+    if m:
+        return None, m.group(1).zfill(6)
+
+    return None, None
 
 
-gestiondocumental_mvp=# select * from lotes_procesamiento;
- id | anio | mes | cliente_abreviatura | ruta_entrada | ruta_salida | estado | creado_en
-----+------+-----+---------------------+--------------+-------------+--------+-----------
-(0 rows)
+def detectar_tipo_por_nombre(filename: str) -> str:
+    nombre = filename.upper()
+
+    if re.search(r"\b(F[A-Z0-9]{2,4}|E[A-Z0-9]{2,4}|FE\d{2}|FT\d{2})\s+\d+\b", nombre):
+        return "factura"
+
+    if "GUIA" in nombre or "GUÍA" in nombre:
+        return "guia_remision"
+
+    if "PAGO" in nombre:
+        return "pago"
+
+    return "otro"
 
 
-gestiondocumental_mvp=# select * from documento_paginas where documento_id=29;
- id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision |         cr
-eado_en
-----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
------------------
-  7 |           29 |             1 | otro           |              |                |              | f                 | 2026-05-06
- 10:51:49.427369
-  8 |           29 |             2 | otro           |              |                |              | f                 | 2026-05-06
- 10:51:49.427369
-  9 |           29 |             3 | otro           |              |                |              | f                 | 2026-05-06
- 10:51:49.427369
-(3 rows)
+def _extract_razon_from_filename(file_name: str):
+    name = file_name.replace(".pdf", "").replace(".PDF", "").strip()
 
+    m = re.search(
+        r"^\d{2}-\d{4}\s+\S+\s+\S+\s+((?:10|20)\d{9})\s+(.+)$",
+        name,
+        re.I,
+    )
 
-gestiondocumental_mvp=# select * from documentos where grupo_id=21;
- id | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero | ruc_emisor  | razon_social_emisor
- | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                   nombre_original
-    |                       nombre_final                        | ruta_origen |
-                  ruta_destino                                                                       |                           ha
-sh_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualizado_en       |
-tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc_detectada_en_
-paginas | requiere_split
-----+---------+----------+--------------------+--------------+-----------------+-------+--------+-------------+--------------------
--+---------------+---------+-----+-----------+--------------------+-------------+--------------------------------------------------
-----+-----------------------------------------------------------+-------------+----------------------------------------------------
------------------------------------------------------------------------------------------------------+-----------------------------
--------------------------------------+---------+--------------+--------+----------------------------+----------------------------+-
----------+--------------+-------------------+-----------------+--------------------+-----------------------------+-----------------
---------+----------------
- 29 |         |       21 |                    |              | factura         | F001  | 670    | 20602867227 | MAX CENTER E.I.R.L.
- |               |         |     |           | clasificado_sin_oc |             | 04-0029 F001 670 20602867227 MAX CENTER E.I.R.L..
-pdf | BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental
-_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf | 42557653fff9c8d5ed45516e5125
-65de2239d9490c049e41ca24dc01fb0dc58c |       3 | f            |        | 2026-05-06 10:51:49.427369 | 2026-05-06 10:51:49.427369 |
-f        |              | f                 |                 | f                  |                           1 |
-        | f
-(1 row)
+    if m:
+        return m.group(2).strip()
 
+    return None
+Y en extract_basic_fields(), el return final debe quedar así:
+Python
+return {
+    "tipo_documental": doc_type,
+    "serie": serie,
+    "numero": numero,
+    "ruc": _extract_ruc_proveedor(text_u, doc_type, name_u),
+    "razon_social": _extract_razon_from_filename(file_name),
+    "fecha_emision": _extract_fecha(text_u),
+    "importe": _extract_importe(text_u),
+    "igv": None,
+    "oc": oc_num,
+    "qr_data": qr_data,
+}
+2. Cambios clave en process_batch.py
+Reemplaza build_nombre_final():
+Python
+def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_name: str) -> str:
+    oc = fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
 
-gestiondocumental_mvp=# select * from grupos_documentales where id=21;
- id | lote_id |            grupo_codigo            | cliente_destino_id | factura_documento_id |  estado   | observacion |
-creado_en          |       actualizado_en       | clave_grupo | tipo_grupo | orden_compra
-----+---------+------------------------------------+--------------------+----------------------+-----------+-------------+---------
--------------------+----------------------------+-------------+------------+--------------
- 21 |         | BBTEC FACTURA F001 670 20602867227 |                    |                      | pendiente |             | 2026-05-
-06 10:51:49.427369 | 2026-05-06 10:51:49.427369 |             |            |
-(1 row)
+    if oc and str(oc).lower() not in ("none", "null", ""):
+        prefijo = f"{cliente_abrev} OC {oc} -"
+    else:
+        prefijo = cliente_abrev
 
+    return build_final_name(
+        prefijo_nombre=prefijo,
+        tipo_documental=tipo,
+        serie=fields.get("serie"),
+        numero=fields.get("numero"),
+        ruc_emisor=fields.get("ruc"),
+        razon_social_emisor=fields.get("razon_social") or fields.get("razon_social_emisor"),
+        fallback_name=fallback_name,
+    )
+Reemplaza normalizar_oc():
+Python
+def normalizar_oc(oc):
+    if not oc or str(oc).lower() in ("none", "null"):
+        return None
 
-gestiondocumental_mvp=# select * from documentos where id = 176;
- id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
-or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
-          |                         nombre_final                          | ruta_origen |
-                              ruta_destino                                                                         |
-            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
-do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
-_detectada_en_paginas | requiere_split
------+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
----+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
-----------+---------------------------------------------------------------+-------------+------------------------------------------
--------------------------------------------------------------------------------------------------------------------+---------------
----------------------------------------------------+---------+--------------+--------+----------------------------+----------------
-------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
-----------------------+----------------
- 176 |         |      161 |                    |              | factura         | F060  | 3612785 | 20523621212 | LIMA EXPRESA S.A.
-C. |               |         |     |           | clasificado_sin_oc |             | 04-0176 F060 3612785 20523621212 LIMA EXPRESA S
-.A.C..pdf | BBTEC FACTURA F060 3612785 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
-Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F060 3612785 20523621212 LIMA_EXPRESA_S_A_C.pdf | 9cbc5993c478d2
-75d4186a892c1829247a4b172d84f4adfe0ef13d267492b1b5 |       1 | f            |        | 2026-05-06 10:52:05.439361 | 2026-05-06 10:5
-2:05.439361 | f        |              | f                 |                 | f                  |                           1 |
-                      | f
-(1 row)
+    digits = re.sub(r"\D", "", str(oc))
 
+    if not digits:
+        return None
 
-gestiondocumental_mvp=# select * from documento_paginas where documento_id=176;
- id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
-----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
-(0 rows)
+    if len(digits) > 10:
+        return None
 
+    return digits.zfill(6)
+Agrega arriba:
+Python
+import re
+3. Exportar internos correctamente
+En el bloque donde exportas internos, reemplaza toda esa parte por esto:
+Python
+tipo_page = page.get("tipo_documental")
 
-gestiondocumental_mvp=# select * from documentos where id = 177;
- id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
-or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
-          |                         nombre_final                          | ruta_origen |
-                              ruta_destino                                                                         |
-            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
-do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
-_detectada_en_paginas | requiere_split
------+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
----+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
-----------+---------------------------------------------------------------+-------------+------------------------------------------
--------------------------------------------------------------------------------------------------------------------+---------------
----------------------------------------------------+---------+--------------+--------+----------------------------+----------------
-------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
-----------------------+----------------
- 177 |         |      162 |                    |              | factura         | F060  | 3596574 | 20523621212 | LIMA EXPRESA S.A.
-C. |               |         |     |           | clasificado_sin_oc |             | 04-0177 F060 3596574 20523621212 LIMA EXPRESA S
-.A.C..pdf | BBTEC FACTURA F060 3596574 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
-Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F060 3596574 20523621212 LIMA_EXPRESA_S_A_C.pdf | 361606d0e13840
-bbb874999da5640ce1328838e5b51f5d3cf4c477efd57683ca |       1 | f            |        | 2026-05-06 10:52:05.502168 | 2026-05-06 10:5
-2:05.502168 | f        |              | f                 |                 | f                  |                           1 |
-                      | f
-(1 row)
+if tipo_page in ("orden_compra", "guia_remision", "nota_ingreso", "pago", "presupuesto"):
+    oc_page = normalizar_oc(page.get("oc") or fields.get("oc"))
 
+    fields_nombre = {
+        **fields,
+        **page["fields"],
+        "oc": oc_page,
+    }
 
-gestiondocumental_mvp=# select * from documento_paginas where documento_id=177;
- id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
-----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
-(0 rows)
+    nombre_interno = build_nombre_final(
+        cliente_abrev=cliente_abrev,
+        tipo=tipo_page,
+        fields=fields_nombre,
+        fallback_name=pdf.name,
+    )
 
+    if oc_page:
+        ruta_interna = output_base / "con_oc" / nombre_interno
+    else:
+        ruta_interna = output_base / "sin_oc" / nombre_interno
 
-gestiondocumental_mvp=# select * from documentos where id = 178;
- id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
-or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
-          |                         nombre_final                          | ruta_origen |
-                              ruta_destino                                                                         |
-            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
-do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
-_detectada_en_paginas | requiere_split
------+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
----+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
-----------+---------------------------------------------------------------+-------------+------------------------------------------
--------------------------------------------------------------------------------------------------------------------+---------------
----------------------------------------------------+---------+--------------+--------+----------------------------+----------------
-------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
-----------------------+----------------
- 178 |         |      163 |                    |              | factura         | F272  | 6120223 | 20523621212 | LIMA EXPRESA S.A.
-C. |               |         |     |           | clasificado_sin_oc |             | 04-0178 F272 6120223 20523621212 LIMA EXPRESA S
-.A.C..pdf | BBTEC FACTURA F272 6120223 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
-Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F272 6120223 20523621212 LIMA_EXPRESA_S_A_C.pdf | a6545d02fe880f
-3451dc9dc805bfd43733906320db453b2ca8c0c8331aae602e |       1 | f            |        | 2026-05-06 10:52:05.599211 | 2026-05-06 10:5
-2:05.599211 | f        |              | f                 |                 | f                  |                           1 |
-                      | f
-(1 row)
+    copy_file(page["temp_pdf"], ruta_interna)
 
-
-gestiondocumental_mvp=# select * from documento_paginas where documento_id=178;
- id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
-----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
-(0 rows)
-
-$ ls -l data/salida/2026/BBTEC/01/con_oc/
-total 224
--rw-r--r-- 1 BBTI 01 197121 60248 may.  6 10:52 'BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121 61768 may.  6 10:52 'BBTEC_OC_6301924_- ORDEN_COMPRA 000008 SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121 38011 may.  6 10:52 'BBTEC_OC_6301924_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121 61437 may.  6 10:52 'BBTEC_OC_None_- PAGO SIN_RAZON_SOCIAL.pdf'
-
-
-$ ls -ld data/salida/2026/BBTEC/01/sin_oc/BBTEC\ FACTURA\ F001\ 670\ 20602867227\ MAX_CENTER_E_I_R_L.pdf 
--rw-r--r-- 1 BBTI 01 197121 1436328 ene. 23 11:33 'data/salida/2026/BBTEC/01/sin_oc/BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf'
-(.venv) 
-
-en alucion a este utimo documeto existen varios documentos pero no existe la OC en caso de que no exista tambien exporta los cada uno de los documentos la nomenclatura seria sin la OC vinculada al inicio
-
-archivos validar:
-https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/core/classifier.py
-
-https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/process_batch.py
+    cur.execute("""
+        INSERT INTO documentos_internos (
+            documento_id,
+            grupo_id,
+            tipo_documental,
+            paginas,
+            orden_compra,
+            nombre_exportado,
+            ruta_exportada,
+            estado
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+    """, (
+        documento_id,
+        grupo_id,
+        tipo_page,
+        str(page["page"]),
+        oc_page,
+        nombre_interno,
+        str(ruta_interna),
+        "exportado",
+    ))
+Con esto ya no saldrá:
+Plain text
+BBTEC_OC_None_-
+y si un PDF tiene guía/pago/presupuesto sin OC, se exportará en:
+Plain text
+sin_oc/
+no en con_oc/.
