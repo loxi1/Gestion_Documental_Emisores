@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import uuid
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -210,12 +211,12 @@ def create_or_get_grupo(conn_cur, lote_id: int, cliente_id, group_info: dict) ->
 def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_name: str) -> str:
     oc = fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
 
-    if oc:
+    if oc and str(oc).lower() not in ("none", "null", ""):
         prefijo = f"{cliente_abrev} OC {oc} -"
     else:
         prefijo = cliente_abrev
 
-    nombre = build_final_name(
+    return build_final_name(
         prefijo_nombre=prefijo,
         tipo_documental=tipo,
         serie=fields.get("serie"),
@@ -224,8 +225,6 @@ def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_nam
         razon_social_emisor=fields.get("razon_social") or fields.get("razon_social_emisor"),
         fallback_name=fallback_name,
     )
-
-    return nombre
 
 
 def get_bucket(estado):
@@ -428,19 +427,27 @@ def main():
                 # -----------------------------
                 tipo_page = page.get("tipo_documental")
 
-                if tipo_page in ("orden_compra", "guia_remision", "nota_ingreso", "pago"):
+                if tipo_page in ("orden_compra", "guia_remision", "nota_ingreso", "pago", "presupuesto"):
+                    oc_page = normalizar_oc(page.get("oc") or fields.get("oc"))
 
-                    nombre_interno = build_final_name(
-                        prefijo_nombre=f"{cliente_abrev} OC {fields.get('oc')} -",
-                        tipo_documental=tipo_page,
-                        serie=page["fields"].get("serie"),
-                        numero=page["fields"].get("numero"),
-                        ruc_emisor=page["fields"].get("ruc"),
-                        razon_social_emisor=page["fields"].get("razon_social"),
-                        fallback_name=pdf.name
+                    fields_nombre = {
+                        **fields,
+                        **page["fields"],
+                        "oc": oc_page,
+                    }
+
+                    nombre_interno = build_nombre_final(
+                        cliente_abrev=cliente_abrev,
+                        tipo=tipo_page,
+                        fields=fields_nombre,
+                        fallback_name=pdf.name,
                     )
 
-                    ruta_interna = output_base / "con_oc" / nombre_interno
+                    if oc_page:
+                        ruta_interna = output_base / "con_oc" / nombre_interno
+                    else:
+                        ruta_interna = output_base / "sin_oc" / nombre_interno
+
                     copy_file(page["temp_pdf"], ruta_interna)
 
                     cur.execute("""
@@ -451,17 +458,19 @@ def main():
                             paginas,
                             orden_compra,
                             nombre_exportado,
-                            ruta_exportada
+                            ruta_exportada,
+                            estado
                         )
-                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (
                         documento_id,
                         grupo_id,
                         tipo_page,
                         str(page["page"]),
-                        fields.get("oc"),
+                        oc_page,
                         nombre_interno,
-                        str(ruta_interna)
+                        str(ruta_interna),
+                        "exportado",
                     ))
 
         print(f"[{estado}] {pdf.name} -> {nombre_final}")
@@ -469,9 +478,18 @@ def main():
     print("Proceso finalizado.")
 
 def normalizar_oc(oc):
-    if not oc:
+    if not oc or str(oc).lower() in ("none", "null"):
         return None
-    return str(int(oc)).zfill(6)
+
+    digits = re.sub(r"\D", "", str(oc))
+
+    if not digits:
+        return None
+
+    if len(digits) > 10:
+        return None
+
+    return digits.zfill(6)
 
 if __name__ == "__main__":
     main()

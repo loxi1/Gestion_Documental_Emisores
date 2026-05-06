@@ -46,36 +46,29 @@ def detect_tipo_documental(text: str, file_name: str) -> str:
         "FACTURAELECTRONICA" in compact
         or re.search(rf"\b{FACTURA_SERIE_RE}\s*[- ]\s*{FACTURA_NUMERO_RE}\b", text_u)
         or re.search(rf"\b{FACTURA_SERIE_RE}\s*[- ]\s*{FACTURA_NUMERO_RE}\b", name_u)
-        or re.search(rf"\b\d{{11}}-01-{FACTURA_SERIE_RE}-{FACTURA_NUMERO_RE}\b", name_u)
     ):
         return "factura"
 
     if (
         "GUIADEREMISION" in compact
+        or "GUIADEREMISIONREMITENTE" in compact
         or re.search(rf"\b{GUIA_SERIE_RE}\s*[- ]\s*{GUIA_NUMERO_RE}\b", text_u)
-        or re.search(rf"\b{GUIA_SERIE_RE}\s*[- ]\s*{GUIA_NUMERO_RE}\b", name_u)
-        or re.search(rf"\b\d{{11}}-09-{GUIA_SERIE_RE}-{GUIA_NUMERO_RE}\b", name_u)
     ):
         return "guia_remision"
 
-    if (
-        re.search(r"ORDEN\s+DE\s+COM\w{0,4}.{0,120}?\d{4,}", text_u, re.I | re.S)
-        or re.search(r"OC\s*BBTI.{0,80}?\d{4,}", text_u + " " + name_u, re.I | re.S)
-        or re.search(r"\bOC[:\s-]*\d{4,}", text_u + " " + name_u, re.I)
-        or re.search(r"\b\d{4,}\.PDF\b", name_u, re.I)
-    ):
+    if "ORDENDESERVICIO" in compact or "ORDENDECOMPRA" in compact:
         return "orden_compra"
 
-    if "NOTAINGRESO" in compact or re.search(r"\bNI[:\s-]*\d{3,}", text_u):
+    if "NOTAINGRESO" in compact:
         return "nota_ingreso"
 
-    if "PAGO" in compact and re.search(r"\b(OP|OPERACION|OPERACION N|NRO)\b", text_u):
-        return "pago"
-    
-    if "ORDEN DE SERVICIO" in text_u or re.search(r"\bN[°º:]?\s*0*\d{3,8}\b", text_u):
-        return "orden_compra"
+    if "PRESUPUESTO" in compact or "PPTO" in compact:
+        return "presupuesto"
 
-    return "otro"
+    if "PAGO" in compact or "TRANSFERENCIA" in compact or "OPERACION" in compact:
+        return "pago"
+
+    return detectar_tipo_por_nombre(file_name)
 
 
 def _extract_factura_fields(text_u: str, name_u: str) -> tuple[str | None, str | None]:
@@ -95,24 +88,33 @@ def _extract_guia_fields(text_u: str, name_u: str) -> tuple[str | None, str | No
 
 
 def _extract_oc_fields(text_u: str, name_u: str):
-    import re
-
-    # ORDEN DE SERVICIO
-    m = re.search(r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(\d{3,10})", text_u, re.S)
+    # Orden de servicio: solo si aparece el contexto correcto
+    m = re.search(
+        r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(\d{3,10})",
+        text_u,
+        re.I | re.S,
+    )
     if m:
         return None, m.group(1).zfill(6)
 
-    # ORDEN DE COMPRA directa
-    m = re.search(r"ORDEN\s+DE\s+COMPRA[:\s]*(\d{3,10})", text_u)
+    # Orden de compra explícita
+    m = re.search(
+        r"ORDEN\s+DE\s+COMPRA[:\s]*(\d{3,10})",
+        text_u,
+        re.I,
+    )
     if m:
         return None, m.group(1).zfill(6)
 
-    # PPTO (presupuesto como OC válida)
-    m = re.search(r"PPTO\s*N[°º]?\s*(\d+)", text_u)
+    # OC / O-C explícito
+    m = re.search(
+        r"\bO[/\-]?\s*C[:\s\-]*(\d{3,10})\b",
+        text_u + " " + name_u,
+        re.I,
+    )
     if m:
-        return None, m.group(1).zfill(3)
+        return None, m.group(1).zfill(6)
 
-    # fallback seguro
     return None, None
 
 
@@ -216,20 +218,24 @@ def extract_basic_fields(text: str, file_name: str) -> dict[str, Any]:
 def detectar_tipo_por_nombre(filename: str) -> str:
     nombre = filename.upper()
 
-    # Facturas: F001, F005, FE01, FT01, E001, F0M3, etc.
     if re.search(r"\b(F[A-Z0-9]{2,4}|E[A-Z0-9]{2,4}|FE\d{2}|FT\d{2})\s+\d+\b", nombre):
         return "factura"
+
+    if "GUIA" in nombre or "GUÍA" in nombre:
+        return "guia_remision"
+
+    if "PAGO" in nombre:
+        return "pago"
 
     return "otro"
 
 def _extract_razon_from_filename(file_name: str):
-    import re
     name = file_name.replace(".pdf", "").replace(".PDF", "").strip()
 
     m = re.search(
         r"^\d{2}-\d{4}\s+\S+\s+\S+\s+((?:10|20)\d{9})\s+(.+)$",
         name,
-        re.IGNORECASE
+        re.I,
     )
 
     if m:
