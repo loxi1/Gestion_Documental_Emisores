@@ -17,23 +17,7 @@ El PDF MAX CENTER tiene factura + guía, pero no OC; debe exportar internos a si
 BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf
 Cambio 1: reemplaza normalizar_oc() en process_batch.py
 Python
-def normalizar_oc(oc):
-    if not oc:
-        return None
 
-    oc = str(oc).strip()
-
-    if oc.lower() in ("none", "null", "", "sin_oc"):
-        return None
-
-    if not oc.isdigit():
-        return None
-
-    # Evita falsos positivos como RUC, cuentas o 6301924
-    if len(oc) > 6:
-        return None
-
-    return oc.zfill(6)
 Cambio 2: usa siempre build_nombre_final()
 En el nombre principal cambia esto:
 Python
@@ -48,22 +32,7 @@ nombre_final = build_nombre_final(
 )
 Cambio 3: corrige build_nombre_final()
 Python
-def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_name: str) -> str:
-    oc = normalizar_oc(
-        fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
-    )
 
-    prefijo = f"{cliente_abrev} OC {oc} -" if oc else cliente_abrev
-
-    return build_final_name(
-        prefijo_nombre=prefijo,
-        tipo_documental=tipo,
-        serie=fields.get("serie"),
-        numero=fields.get("numero"),
-        ruc_emisor=fields.get("ruc"),
-        razon_social_emisor=fields.get("razon_social") or fields.get("razon_social_emisor"),
-        fallback_name=fallback_name,
-    )
 Cambio 4: corrige exportación de internos
 Reemplaza este bloque:
 Python
@@ -103,23 +72,7 @@ if m:
     return None, m.group(1).zfill(3)
 Debe quedar así:
 Python
-def _extract_oc_fields(text_u: str, name_u: str):
-    text_u = normalize_text(text_u)
 
-    if "ORDEN DE SERVICIO" in text_u:
-        m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text_u)
-        if m:
-            return None, m.group(1).zfill(6)
-
-    m = re.search(r"ORDEN\s+DE\s+COMPRA\s*:?\s*(\d{3,6})", text_u)
-    if m:
-        return None, m.group(1).zfill(6)
-
-    m = re.search(r"\bO[./-]?C\.?\s*:?\s*(\d{3,6})\b", text_u)
-    if m:
-        return None, m.group(1).zfill(6)
-
-    return None, None
 Resultado esperado
 Para MAX CENTER:
 Plain text

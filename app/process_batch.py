@@ -209,12 +209,11 @@ def create_or_get_grupo(conn_cur, lote_id: int, cliente_id, group_info: dict) ->
 
 
 def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_name: str) -> str:
-    oc = fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
+    oc = normalizar_oc(
+        fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
+    )
 
-    if oc and str(oc).lower() not in ("none", "null", ""):
-        prefijo = f"{cliente_abrev} OC {oc} -"
-    else:
-        prefijo = cliente_abrev
+    prefijo = f"{cliente_abrev} OC {oc} -" if oc else cliente_abrev
 
     return build_final_name(
         prefijo_nombre=prefijo,
@@ -330,14 +329,11 @@ def main():
             fields.get("razon_social")
         )
 
-        nombre_final = build_final_name(
-            prefijo_nombre=f"{cliente_abrev} OC {fields.get('oc')} -" if fields.get("oc") else cliente_abrev,
-            tipo_documental=tipo,
-            serie=fields.get("serie"),
-            numero=fields.get("numero"),
-            ruc_emisor=fields.get("ruc"),
-            razon_social_emisor=fields.get("razon_social"),
-            fallback_name=pdf.name
+        nombre_final = build_nombre_final(
+            cliente_abrev=cliente_abrev,
+            tipo=tipo,
+            fields=fields,
+            fallback_name=pdf.name,
         )
 
         destino = output_base / bucket / nombre_final
@@ -430,7 +426,7 @@ def main():
                 if tipo_page in ("orden_compra", "guia_remision", "nota_ingreso", "pago", "presupuesto"):
                     oc_page = normalizar_oc(page.get("oc") or fields.get("oc"))
 
-                    fields_nombre = {
+                    fields_interno = {
                         **fields,
                         **page["fields"],
                         "oc": oc_page,
@@ -439,14 +435,12 @@ def main():
                     nombre_interno = build_nombre_final(
                         cliente_abrev=cliente_abrev,
                         tipo=tipo_page,
-                        fields=fields_nombre,
+                        fields=fields_interno,
                         fallback_name=pdf.name,
                     )
 
-                    if oc_page:
-                        ruta_interna = output_base / "con_oc" / nombre_interno
-                    else:
-                        ruta_interna = output_base / "sin_oc" / nombre_interno
+                    bucket_interno = "con_oc" if oc_page else "sin_oc"
+                    ruta_interna = output_base / bucket_interno / nombre_interno
 
                     copy_file(page["temp_pdf"], ruta_interna)
 
@@ -478,18 +472,22 @@ def main():
     print("Proceso finalizado.")
 
 def normalizar_oc(oc):
-    if not oc or str(oc).lower() in ("none", "null"):
+    if not oc:
         return None
 
-    digits = re.sub(r"\D", "", str(oc))
+    oc = str(oc).strip()
 
-    if not digits:
+    if oc.lower() in ("none", "null", "", "sin_oc"):
         return None
 
-    if len(digits) > 10:
+    if not oc.isdigit():
         return None
 
-    return digits.zfill(6)
+    # Evita falsos positivos como RUC, cuentas o 6301924
+    if len(oc) > 6:
+        return None
+
+    return oc.zfill(6)
 
 if __name__ == "__main__":
     main()

@@ -88,30 +88,18 @@ def _extract_guia_fields(text_u: str, name_u: str) -> tuple[str | None, str | No
 
 
 def _extract_oc_fields(text_u: str, name_u: str):
-    # Orden de servicio: solo si aparece el contexto correcto
-    m = re.search(
-        r"ORDEN\s+DE\s+SERVICIO.*?N[°º:]?\s*(\d{3,10})",
-        text_u,
-        re.I | re.S,
-    )
+    text_u = normalize_text(text_u)
+
+    if "ORDEN DE SERVICIO" in text_u:
+        m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text_u)
+        if m:
+            return None, m.group(1).zfill(6)
+
+    m = re.search(r"ORDEN\s+DE\s+COMPRA\s*:?\s*(\d{3,6})", text_u)
     if m:
         return None, m.group(1).zfill(6)
 
-    # Orden de compra explícita
-    m = re.search(
-        r"ORDEN\s+DE\s+COMPRA[:\s]*(\d{3,10})",
-        text_u,
-        re.I,
-    )
-    if m:
-        return None, m.group(1).zfill(6)
-
-    # OC / O-C explícito
-    m = re.search(
-        r"\bO[/\-]?\s*C[:\s\-]*(\d{3,10})\b",
-        text_u + " " + name_u,
-        re.I,
-    )
+    m = re.search(r"\bO[./-]?C\.?\s*:?\s*(\d{3,6})\b", text_u)
     if m:
         return None, m.group(1).zfill(6)
 
