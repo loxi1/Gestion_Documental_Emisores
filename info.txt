@@ -1,70 +1,197 @@
-Primero analiza esto:
-gestiondocumental_mvp=# select * from grupos_documentales where id in (176,177,178);
- id  | lote_id |     grupo_codigo     | cliente_destino_id | factura_documento_id |  estado   | observacion |         creado_en
-          |       actualizado_en       | clave_grupo | tipo_grupo | orden_compra
------+---------+----------------------+--------------------+----------------------+-----------+-------------+------------------
-----------+----------------------------+-------------+------------+--------------
- 176 |         | BBTEC OC 00063019240 |                    |                      | pendiente |             | 2026-05-05 11:10:
-49.350675 | 2026-05-05 11:10:49.350675 |             |            |
- 177 |         | BBTEC OC 034         |                    |                      | pendiente |             | 2026-05-05 11:10:
-49.604562 | 2026-05-05 11:10:49.604562 |             |            |
- 178 |         | BBTEC OC 000228      |                    |                      | pendiente |             | 2026-05-05 11:10:
-50.282914 | 2026-05-05 11:10:50.282914 |             |            |
+gestiondocumental_mvp=# select * from documentos_internos;
+ id | documento_id | grupo_id | tipo_documental | paginas | orden_compra |                      nombre_exportado
+    |                                                                      ruta_exportada
+                             | estado |         creado_en
+----+--------------+----------+-----------------+---------+--------------+---------------------------------------------------------
+----+------------------------------------------------------------------------------------------------------------------------------
+-----------------------------+--------+----------------------------
+  1 |          194 |      176 | orden_compra    | 2       | 6301924      | BBTEC_OC_6301924_- ORDEN_COMPRA 000008 SIN_RAZON_SOCIAL.
+pdf | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_6301924_- ORDEN_COMPRA
+ 000008 SIN_RAZON_SOCIAL.pdf |        | 2026-05-06 10:52:07.189311
+  2 |          194 |      176 | orden_compra    | 3       | 6301924      | BBTEC_OC_6301924_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf
+    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_6301924_- ORDEN_COMPRA
+ 008 SIN_RAZON_SOCIAL.pdf    |        | 2026-05-06 10:52:07.189311
+  3 |          195 |      177 | pago            | 2       |              | BBTEC_OC_None_- PAGO SIN_RAZON_SOCIAL.pdf
+    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_None_- PAGO SIN_RAZON_
+SOCIAL.pdf                   |        | 2026-05-06 10:52:07.450231
+  4 |          197 |      178 | pago            | 2       | 000228       | BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf
+    | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\salida\2026\BBTEC\01\con_oc\BBTEC_OC_000228_- PAGO SIN_RAZO
+N_SOCIAL.pdf                 |        | 2026-05-06 10:52:08.036356
+(4 rows)
+
+
+gestiondocumental_mvp=# select * from documentos_procesados;
+ id | hash_sha256 | archivo_original | archivo_renombrado | ruta_origen | ruta_destino | tipo_documento | serie | numero | ruc_emis
+or | razon_social_emisor | fecha_emision | importe_total | cliente_destino_id | cliente_abreviatura | asiento_contable | grupo_docu
+mental | estado | observacion | datos_extraidos | creado_en | actualizado_en | lote_id | grupo_id | orden_compra | tiene_oc | fuent
+e_datos | requiere_revision | motivo_revision
+----+-------------+------------------+--------------------+-------------+--------------+----------------+-------+--------+---------
+---+---------------------+---------------+---------------+--------------------+---------------------+------------------+-----------
+-------+--------+-------------+-----------------+-----------+----------------+---------+----------+--------------+----------+------
+--------+-------------------+-----------------
+(0 rows)
+
+
+gestiondocumental_mvp=# select * from lotes_procesamiento;
+ id | anio | mes | cliente_abreviatura | ruta_entrada | ruta_salida | estado | creado_en
+----+------+-----+---------------------+--------------+-------------+--------+-----------
+(0 rows)
+
+
+gestiondocumental_mvp=# select * from documento_paginas where documento_id=29;
+ id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision |         cr
+eado_en
+----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
+-----------------
+  7 |           29 |             1 | otro           |              |                |              | f                 | 2026-05-06
+ 10:51:49.427369
+  8 |           29 |             2 | otro           |              |                |              | f                 | 2026-05-06
+ 10:51:49.427369
+  9 |           29 |             3 | otro           |              |                |              | f                 | 2026-05-06
+ 10:51:49.427369
 (3 rows)
 
 
-gestiondocumental_mvp=# select * from documentos where grupo_id in (176,177,178);
- id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie |  numero  | ruc_emisor  |
-  razon_social_emisor                | fecha_emision | importe | igv |  oc_numero  |  estado_documento  | observacion |
-                          nombre_original                                   |                                        nombre_fin
-al                                        | ruta_origen |
-                     ruta_destino                                                                                            |
-                          hash_sha256                            | paginas | es_principal | qr_raw |         creado_en
- |       actualizado_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_docu
-mentos_detectados | oc_detectada_en_paginas | requiere_split
------+---------+----------+--------------------+--------------+-----------------+-------+----------+-------------+-------------
--------------------------------------+---------------+---------+-----+-------------+--------------------+-------------+--------
-----------------------------------------------------------------------------+--------------------------------------------------
-------------------------------------------+-------------+----------------------------------------------------------------------
------------------------------------------------------------------------------------------------------------------------------+-
------------------------------------------------------------------+---------+--------------+--------+---------------------------
--+----------------------------+----------+--------------+-------------------+-----------------+--------------------+-----------
-------------------+-------------------------+----------------
- 194 |         |      176 |                    |              | factura         |       |          | 20101635873 | SIM CONTRATI
-STAS GENERALES E.I.R.L.              |               |         |     | 00063019240 | revision_manual    |             | 04-0194
- E001 754 20101635873 SIM CONTRATISTAS GENERALES E.I.R.L..pdf               | BBTEC_OC_00063019240_- FACTURA 20101635873 SIM_CO
-NTRATISTAS_GENERALES_E_I_R_L.pdf          |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
-ida\2026\BBTEC\01\revision_manual\BBTEC_OC_00063019240_- FACTURA 20101635873 SIM_CONTRATISTAS_GENERALES_E_I_R_L.pdf          |
-befc5adb06d3fddced96f558ec0bdd1f7c04c91ac364b21341386e0dff33b66e |       3 | f            |        | 2026-05-05 11:10:49.350675
- | 2026-05-05 11:10:49.350675 | t        |              | f                 |                 | f                  |
-                1 |                         | f
- 195 |         |      177 |                    |              | factura         | F001  | 00005175 | 20383086702 | MANTENIMIENT
-O Y SUPERVISION S.A.                 |               |         |     | 034         | clasificado_con_oc |             | 04-0195
- F001 5175 20383086702 MANTENIMIENTO Y SUPERVISION S.A..pdf                 | BBTEC_OC_034_- FACTURA F001 00005175 20383086702
-MANTENIMIENTO_Y_SUPERVISION_S_A.pdf       |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
-ida\2026\BBTEC\01\con_oc\BBTEC_OC_034_- FACTURA F001 00005175 20383086702 MANTENIMIENTO_Y_SUPERVISION_S_A.pdf                |
-5691a1635b14a25c6fcdf3ffd9e4452886e90c8412283f3a042ad7cadcee8c96 |       3 | f            |        | 2026-05-05 11:10:49.604562
- | 2026-05-05 11:10:49.604562 | t        |              | f                 |                 | f                  |
-                1 |                         | f
- 197 |         |      178 |                    |              | factura         |       |          | 20541464264 | EMP DE MANTE
-NIMIENTO MONTAJES Y SERV M┌LTIPLES F |               |         |     | 000228      | revision_manual    |             | 04-0197
- E001 1085 20541464264 EMP DE MANTENIMIENTO MONTAJES Y SERV M┌LTIPLES F.pdf | BBTEC_OC_000228_- FACTURA 20541464264 EMP_DE_MANT
-ENIMIENTO_MONTAJES_Y_SERV_MULTIPLES_F.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\data\sal
-ida\2026\BBTEC\01\revision_manual\BBTEC_OC_000228_- FACTURA 20541464264 EMP_DE_MANTENIMIENTO_MONTAJES_Y_SERV_MULTIPLES_F.pdf |
-22cc1181ff0a27a3683c90866b34f1fdae2ab0b08ad23713710d34eaa05ec853 |       8 | f            |        | 2026-05-05 11:10:50.282914
- | 2026-05-05 11:10:50.282914 | t        |              | f                 |                 | f                  |
-                1 |                         | f
-(3 rows)
+gestiondocumental_mvp=# select * from documentos where grupo_id=21;
+ id | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero | ruc_emisor  | razon_social_emisor
+ | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                   nombre_original
+    |                       nombre_final                        | ruta_origen |
+                  ruta_destino                                                                       |                           ha
+sh_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualizado_en       |
+tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc_detectada_en_
+paginas | requiere_split
+----+---------+----------+--------------------+--------------+-----------------+-------+--------+-------------+--------------------
+-+---------------+---------+-----+-----------+--------------------+-------------+--------------------------------------------------
+----+-----------------------------------------------------------+-------------+----------------------------------------------------
+-----------------------------------------------------------------------------------------------------+-----------------------------
+-------------------------------------+---------+--------------+--------+----------------------------+----------------------------+-
+---------+--------------+-------------------+-----------------+--------------------+-----------------------------+-----------------
+--------+----------------
+ 29 |         |       21 |                    |              | factura         | F001  | 670    | 20602867227 | MAX CENTER E.I.R.L.
+ |               |         |     |           | clasificado_sin_oc |             | 04-0029 F001 670 20602867227 MAX CENTER E.I.R.L..
+pdf | BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_Documental
+_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf | 42557653fff9c8d5ed45516e5125
+65de2239d9490c049e41ca24dc01fb0dc58c |       3 | f            |        | 2026-05-06 10:51:49.427369 | 2026-05-06 10:51:49.427369 |
+f        |              | f                 |                 | f                  |                           1 |
+        | f
+(1 row)
+
+
+gestiondocumental_mvp=# select * from grupos_documentales where id=21;
+ id | lote_id |            grupo_codigo            | cliente_destino_id | factura_documento_id |  estado   | observacion |
+creado_en          |       actualizado_en       | clave_grupo | tipo_grupo | orden_compra
+----+---------+------------------------------------+--------------------+----------------------+-----------+-------------+---------
+-------------------+----------------------------+-------------+------------+--------------
+ 21 |         | BBTEC FACTURA F001 670 20602867227 |                    |                      | pendiente |             | 2026-05-
+06 10:51:49.427369 | 2026-05-06 10:51:49.427369 |             |            |
+(1 row)
+
+
+gestiondocumental_mvp=# select * from documentos where id = 176;
+ id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
+or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
+          |                         nombre_final                          | ruta_origen |
+                              ruta_destino                                                                         |
+            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
+do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
+_detectada_en_paginas | requiere_split
+-----+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
+---+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
+----------+---------------------------------------------------------------+-------------+------------------------------------------
+-------------------------------------------------------------------------------------------------------------------+---------------
+---------------------------------------------------+---------+--------------+--------+----------------------------+----------------
+------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
+----------------------+----------------
+ 176 |         |      161 |                    |              | factura         | F060  | 3612785 | 20523621212 | LIMA EXPRESA S.A.
+C. |               |         |     |           | clasificado_sin_oc |             | 04-0176 F060 3612785 20523621212 LIMA EXPRESA S
+.A.C..pdf | BBTEC FACTURA F060 3612785 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
+Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F060 3612785 20523621212 LIMA_EXPRESA_S_A_C.pdf | 9cbc5993c478d2
+75d4186a892c1829247a4b172d84f4adfe0ef13d267492b1b5 |       1 | f            |        | 2026-05-06 10:52:05.439361 | 2026-05-06 10:5
+2:05.439361 | f        |              | f                 |                 | f                  |                           1 |
+                      | f
+(1 row)
+
+
+gestiondocumental_mvp=# select * from documento_paginas where documento_id=176;
+ id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
+----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
+(0 rows)
+
+
+gestiondocumental_mvp=# select * from documentos where id = 177;
+ id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
+or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
+          |                         nombre_final                          | ruta_origen |
+                              ruta_destino                                                                         |
+            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
+do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
+_detectada_en_paginas | requiere_split
+-----+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
+---+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
+----------+---------------------------------------------------------------+-------------+------------------------------------------
+-------------------------------------------------------------------------------------------------------------------+---------------
+---------------------------------------------------+---------+--------------+--------+----------------------------+----------------
+------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
+----------------------+----------------
+ 177 |         |      162 |                    |              | factura         | F060  | 3596574 | 20523621212 | LIMA EXPRESA S.A.
+C. |               |         |     |           | clasificado_sin_oc |             | 04-0177 F060 3596574 20523621212 LIMA EXPRESA S
+.A.C..pdf | BBTEC FACTURA F060 3596574 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
+Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F060 3596574 20523621212 LIMA_EXPRESA_S_A_C.pdf | 361606d0e13840
+bbb874999da5640ce1328838e5b51f5d3cf4c477efd57683ca |       1 | f            |        | 2026-05-06 10:52:05.502168 | 2026-05-06 10:5
+2:05.502168 | f        |              | f                 |                 | f                  |                           1 |
+                      | f
+(1 row)
+
+
+gestiondocumental_mvp=# select * from documento_paginas where documento_id=177;
+ id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
+----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
+(0 rows)
+
+
+gestiondocumental_mvp=# select * from documentos where id = 178;
+ id  | lote_id | grupo_id | cliente_destino_id | proveedor_id | tipo_documental | serie | numero  | ruc_emisor  | razon_social_emis
+or | fecha_emision | importe | igv | oc_numero |  estado_documento  | observacion |                     nombre_original
+          |                         nombre_final                          | ruta_origen |
+                              ruta_destino                                                                         |
+            hash_sha256                            | paginas | es_principal | qr_raw |         creado_en          |       actualiza
+do_en       | tiene_oc | fuente_datos | requiere_revision | motivo_revision | es_pdf_multipagina | total_documentos_detectados | oc
+_detectada_en_paginas | requiere_split
+-----+---------+----------+--------------------+--------------+-----------------+-------+---------+-------------+------------------
+---+---------------+---------+-----+-----------+--------------------+-------------+------------------------------------------------
+----------+---------------------------------------------------------------+-------------+------------------------------------------
+-------------------------------------------------------------------------------------------------------------------+---------------
+---------------------------------------------------+---------+--------------+--------+----------------------------+----------------
+------------+----------+--------------+-------------------+-----------------+--------------------+-----------------------------+---
+----------------------+----------------
+ 178 |         |      163 |                    |              | factura         | F272  | 6120223 | 20523621212 | LIMA EXPRESA S.A.
+C. |               |         |     |           | clasificado_sin_oc |             | 04-0178 F272 6120223 20523621212 LIMA EXPRESA S
+.A.C..pdf | BBTEC FACTURA F272 6120223 20523621212 LIMA_EXPRESA_S_A_C.pdf |             | C:\D\Proyectos\GestionDocumental\Gestion_
+Documental_Emisores\data\salida\2026\BBTEC\01\sin_oc\BBTEC FACTURA F272 6120223 20523621212 LIMA_EXPRESA_S_A_C.pdf | a6545d02fe880f
+3451dc9dc805bfd43733906320db453b2ca8c0c8331aae602e |       1 | f            |        | 2026-05-06 10:52:05.599211 | 2026-05-06 10:5
+2:05.599211 | f        |              | f                 |                 | f                  |                           1 |
+                      | f
+(1 row)
+
+
+gestiondocumental_mvp=# select * from documento_paginas where documento_id=178;
+ id | documento_id | numero_pagina | tipo_detectado | orden_compra | texto_extraido | fuente_texto | requiere_revision | creado_en
+----+--------------+---------------+----------------+--------------+----------------+--------------+-------------------+-----------
+(0 rows)
 
 $ ls -l data/salida/2026/BBTEC/01/con_oc/
-total 444
--rw-r--r-- 1 BBTI 01 197121  60244 may.  5 11:10 'BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121  61768 may.  5 11:10 'BBTEC_OC_00063019240_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121  38011 may.  5 11:10 'BBTEC_OC_00063019240_- ORDEN_COMPRA SIN_RAZON_SOCIAL.pdf'
--rw-r--r-- 1 BBTI 01 197121 223756 feb.  4 09:23 'BBTEC_OC_034_- FACTURA F001 00005175 20383086702 MANTENIMIENTO_Y_SUPERVISION_S_A.pdf'
--rw-r--r-- 1 BBTI 01 197121  61437 may.  5 11:10 'BBTEC_OC_034_- PAGO SIN_RAZON_SOCIAL.pdf'
+total 224
+-rw-r--r-- 1 BBTI 01 197121 60248 may.  6 10:52 'BBTEC_OC_000228_- PAGO SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121 61768 may.  6 10:52 'BBTEC_OC_6301924_- ORDEN_COMPRA 000008 SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121 38011 may.  6 10:52 'BBTEC_OC_6301924_- ORDEN_COMPRA 008 SIN_RAZON_SOCIAL.pdf'
+-rw-r--r-- 1 BBTI 01 197121 61437 may.  6 10:52 'BBTEC_OC_None_- PAGO SIN_RAZON_SOCIAL.pdf'
+
+
+$ ls -ld data/salida/2026/BBTEC/01/sin_oc/BBTEC\ FACTURA\ F001\ 670\ 20602867227\ MAX_CENTER_E_I_R_L.pdf 
+-rw-r--r-- 1 BBTI 01 197121 1436328 ene. 23 11:33 'data/salida/2026/BBTEC/01/sin_oc/BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf'
 (.venv) 
 
+en alucion a este utimo documeto existen varios documentos pero no existe la OC en caso de que no exista tambien exporta los cada uno de los documentos la nomenclatura seria sin la OC vinculada al inicio
 
 archivos validar:
 https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/core/classifier.py
