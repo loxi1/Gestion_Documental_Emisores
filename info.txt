@@ -1,96 +1,134 @@
-Sí. Revisé tu process_batch.py y classifier.py actuales; el problema principal es que siempre exportabas internos a con_oc, incluso con OC None, y el clasificador estaba tomando números incorrectos como OC. �
+Sí, ya revisé los dos archivos del repo. Todavía hay 5 errores que explican por qué no hace lo esperado. �
 GitHub +1
-1. app/core/classifier.py
-Reemplaza estas funciones:
-Python
-
-
-
-
-
-
-
-
-
-
-Y en extract_basic_fields(), el return final debe quedar así:
-Python
-return {
-    "tipo_documental": doc_type,
-    "serie": serie,
-    "numero": numero,
-    "ruc": _extract_ruc_proveedor(text_u, doc_type, name_u),
-    "razon_social": _extract_razon_from_filename(file_name),
-    "fecha_emision": _extract_fecha(text_u),
-    "importe": _extract_importe(text_u),
-    "igv": None,
-    "oc": oc_num,
-    "qr_data": qr_data,
-}
-2. Cambios clave en process_batch.py
-Reemplaza build_nombre_final():
-Python
-
-Reemplaza normalizar_oc():
-Python
-
-Agrega arriba:
-Python
-import re
-3. Exportar internos correctamente
-En el bloque donde exportas internos, reemplaza toda esa parte por esto:
-Python
-tipo_page = page.get("tipo_documental")
-
-if tipo_page in ("orden_compra", "guia_remision", "nota_ingreso", "pago", "presupuesto"):
-    oc_page = normalizar_oc(page.get("oc") or fields.get("oc"))
-
-    fields_nombre = {
-        **fields,
-        **page["fields"],
-        "oc": oc_page,
-    }
-
-    nombre_interno = build_nombre_final(
-        cliente_abrev=cliente_abrev,
-        tipo=tipo_page,
-        fields=fields_nombre,
-        fallback_name=pdf.name,
-    )
-
-    if oc_page:
-        ruta_interna = output_base / "con_oc" / nombre_interno
-    else:
-        ruta_interna = output_base / "sin_oc" / nombre_interno
-
-    copy_file(page["temp_pdf"], ruta_interna)
-
-    cur.execute("""
-        INSERT INTO documentos_internos (
-            documento_id,
-            grupo_id,
-            tipo_documental,
-            paginas,
-            orden_compra,
-            nombre_exportado,
-            ruta_exportada,
-            estado
-        )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        documento_id,
-        grupo_id,
-        tipo_page,
-        str(page["page"]),
-        oc_page,
-        nombre_interno,
-        str(ruta_interna),
-        "exportado",
-    ))
-Con esto ya no saldrá:
+Problemas actuales
+En process_batch.py estás usando fields.get("oc") directo para el nombre. Por eso puede salir:
 Plain text
 BBTEC_OC_None_-
-y si un PDF tiene guía/pago/presupuesto sin OC, se exportará en:
+normalizar_oc() acepta números falsos largos como:
+Plain text
+6301924
+Eso no debería ser OC.
+En classifier.py todavía conviertes PPTO N° 008 en OC. Eso está causando:
+Plain text
+BBTEC_OC_000008
+Pero 008 es presupuesto, no OC.
+Los internos siempre van a con_oc, aunque no tengan OC real.
+El PDF MAX CENTER tiene factura + guía, pero no OC; debe exportar internos a sin_oc, no a con_oc. La página 2 se ve como guía de remisión. �
+BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf
+Cambio 1: reemplaza normalizar_oc() en process_batch.py
+Python
+def normalizar_oc(oc):
+    if not oc:
+        return None
+
+    oc = str(oc).strip()
+
+    if oc.lower() in ("none", "null", "", "sin_oc"):
+        return None
+
+    if not oc.isdigit():
+        return None
+
+    # Evita falsos positivos como RUC, cuentas o 6301924
+    if len(oc) > 6:
+        return None
+
+    return oc.zfill(6)
+Cambio 2: usa siempre build_nombre_final()
+En el nombre principal cambia esto:
+Python
+nombre_final = build_final_name(...)
+por:
+Python
+nombre_final = build_nombre_final(
+    cliente_abrev=cliente_abrev,
+    tipo=tipo,
+    fields=fields,
+    fallback_name=pdf.name,
+)
+Cambio 3: corrige build_nombre_final()
+Python
+def build_nombre_final(cliente_abrev: str, tipo: str, fields: dict, fallback_name: str) -> str:
+    oc = normalizar_oc(
+        fields.get("oc") or fields.get("orden_compra") or fields.get("oc_numero")
+    )
+
+    prefijo = f"{cliente_abrev} OC {oc} -" if oc else cliente_abrev
+
+    return build_final_name(
+        prefijo_nombre=prefijo,
+        tipo_documental=tipo,
+        serie=fields.get("serie"),
+        numero=fields.get("numero"),
+        ruc_emisor=fields.get("ruc"),
+        razon_social_emisor=fields.get("razon_social") or fields.get("razon_social_emisor"),
+        fallback_name=fallback_name,
+    )
+Cambio 4: corrige exportación de internos
+Reemplaza este bloque:
+Python
+nombre_interno = build_final_name(...)
+ruta_interna = output_base / "con_oc" / nombre_interno
+por:
+Python
+oc_page = normalizar_oc(page.get("oc") or fields.get("oc"))
+
+fields_interno = {
+    **fields,
+    **page["fields"],
+    "oc": oc_page,
+}
+
+nombre_interno = build_nombre_final(
+    cliente_abrev=cliente_abrev,
+    tipo=tipo_page,
+    fields=fields_interno,
+    fallback_name=pdf.name,
+)
+
+bucket_interno = "con_oc" if oc_page else "sin_oc"
+ruta_interna = output_base / bucket_interno / nombre_interno
+Y en el insert:
+Python
+oc_page
+en vez de:
+Python
+fields.get("oc")
+Cambio 5: corrige _extract_oc_fields() en classifier.py
+Quita esta parte:
+Python
+# PPTO (presupuesto como OC válida)
+m = re.search(r"PPTO\s*N[°º]?\s*(\d+)", text_u)
+if m:
+    return None, m.group(1).zfill(3)
+Debe quedar así:
+Python
+def _extract_oc_fields(text_u: str, name_u: str):
+    text_u = normalize_text(text_u)
+
+    if "ORDEN DE SERVICIO" in text_u:
+        m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text_u)
+        if m:
+            return None, m.group(1).zfill(6)
+
+    m = re.search(r"ORDEN\s+DE\s+COMPRA\s*:?\s*(\d{3,6})", text_u)
+    if m:
+        return None, m.group(1).zfill(6)
+
+    m = re.search(r"\bO[./-]?C\.?\s*:?\s*(\d{3,6})\b", text_u)
+    if m:
+        return None, m.group(1).zfill(6)
+
+    return None, None
+Resultado esperado
+Para MAX CENTER:
 Plain text
 sin_oc/
-no en con_oc/.
+BBTEC FACTURA F001 670 20602867227 MAX_CENTER_E_I_R_L.pdf
+BBTEC GUIA_REMISION ... MAX_CENTER_E_I_R_L.pdf
+Para OC real:
+Plain text
+con_oc/
+BBTEC_OC_000228_- ORDEN_COMPRA ...
+BBTEC_OC_000228_- PAGO ...
+Primero aplica esos 5 cambios. Ahí deberían desaparecer OC_None, OC_6301924 y OC_000008 falso.
