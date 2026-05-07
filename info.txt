@@ -1,3 +1,219 @@
+
+Sí. Este sería el app/clasificar_paginas.py final, equivalente al agrupador/exportador de páginas ya enriquecidas.
+Python
+import argparse
+from pathlib import Path
+
+import fitz
+
+from core.db import get_cursor
+
+
+BASE_TRABAJO = Path("data/trabajo")
+BASE_SALIDA = Path("data/salida")
+
+
+def mismo_documento(prev, actual) -> bool:
+    if prev["archivo_fuente"] != actual["archivo_fuente"]:
+        return False
+
+    if actual.get("es_reverso"):
+        return True
+
+    if prev["tipo_detectado_basico"] != actual["tipo_detectado_basico"]:
+        return False
+
+    if not prev.get("clave_documental") or not actual.get("clave_documental"):
+        return False
+
+    return prev["clave_documental"] == actual["clave_documental"]
+
+
+def crear_grupos(rows):
+    grupos = []
+    actual = []
+
+    for row in rows:
+        if not actual:
+            actual.append(row)
+            continue
+
+        prev = actual[-1]
+
+        if row["pagina"] == prev["pagina"] + 1 and mismo_documento(prev, row):
+            actual.append(row)
+        else:
+            grupos.append(actual)
+            actual = [row]
+
+    if actual:
+        grupos.append(actual)
+
+    return grupos
+
+
+def nombre_provisional(grupo):
+    first = grupo[0]
+    last = grupo[-1]
+
+    asiento = first["asiento_contable"]
+    tipo = first["tipo_detectado_basico"]
+    clave = first.get("clave_documental") or ""
+
+    p_ini = first["pagina"]
+    p_fin = last["pagina"]
+
+    if clave.startswith("FACTURA|"):
+        _, ruc, serie, numero = clave.split("|")
+        return f"{asiento} FACTURA {serie} {numero} {ruc} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+    if clave.startswith("GUIA|"):
+        _, ruc, serie, numero = clave.split("|")
+        return f"{asiento} GUIA_REMISION {serie} {numero} {ruc} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+    if clave.startswith("OS|"):
+        numero = clave.split("|")[1]
+        return f"{asiento} OS {numero} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+    if clave.startswith("OC|"):
+        numero = clave.split("|")[1]
+        return f"{asiento} OC {numero} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+    if clave.startswith("NI|"):
+        numero = clave.split("|")[1]
+        return f"{asiento} NOTA_INGRESO {numero} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+    tipo_nombre = (tipo or "OTRO").upper()
+    return f"{asiento} {tipo_nombre} P{p_ini:03d}-P{p_fin:03d}.pdf"
+
+
+def exportar_paginas(pdf_origen: Path, paginas: list[int], destino: Path):
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    src = fitz.open(pdf_origen)
+    dst = fitz.open()
+
+    for pagina in paginas:
+        dst.insert_pdf(src, from_page=pagina - 1, to_page=pagina - 1)
+
+    dst.save(destino)
+
+    dst.close()
+    src.close()
+
+
+def registrar_agrupado(grupo, destino: Path, nombre: str):
+    first = grupo[0]
+    last = grupo[-1]
+    clave = first.get("clave_documental") or ""
+
+    orden_servicio = None
+    orden_compra = None
+
+    if clave.startswith("OS|"):
+        orden_servicio = clave.split("|")[1]
+
+    if clave.startswith("OC|"):
+        orden_compra = clave.split("|")[1]
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute(
+            """
+            INSERT INTO documentos_agrupados (
+                asiento_contable,
+                archivo_fuente,
+                tipo_documental,
+                clave_documental,
+                serie,
+                numero,
+                orden_servicio,
+                orden_compra,
+                pagina_inicio,
+                pagina_fin,
+                paginas,
+                nombre_provisional,
+                ruta_provisional,
+                estado
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'agrupado')
+            """,
+            (
+                first["asiento_contable"],
+                first["archivo_fuente"],
+                first["tipo_detectado_basico"],
+                clave,
+                first.get("serie"),
+                first.get("numero"),
+                orden_servicio,
+                orden_compra,
+                first["pagina"],
+                last["pagina"],
+                ",".join(str(x["pagina"]) for x in grupo),
+                nombre,
+                str(destino),
+            ),
+        )
+
+
+def process(year: int, cliente: str, month: int):
+    pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
+    salida = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "provisional"
+
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT *
+            FROM documentos_paginas
+            WHERE estado = 'enriquecido'
+               OR estado = 'detectado'
+            ORDER BY archivo_fuente, pagina
+            """
+        )
+        rows = cur.fetchall()
+
+    por_archivo = {}
+
+    for row in rows:
+        por_archivo.setdefault(row["archivo_fuente"], []).append(row)
+
+    total = 0
+
+    for archivo_fuente, paginas in por_archivo.items():
+        pdf_origen = pendientes / archivo_fuente
+
+        if not pdf_origen.exists():
+            print(f"[WARN] No existe fuente: {pdf_origen}")
+            continue
+
+        grupos = crear_grupos(paginas)
+
+        for grupo in grupos:
+            nombre = nombre_provisional(grupo)
+            destino = salida / nombre
+            paginas_pdf = [x["pagina"] for x in grupo]
+
+            exportar_paginas(pdf_origen, paginas_pdf, destino)
+            registrar_agrupado(grupo, destino, nombre)
+
+            total += 1
+            print(f"[AGRUPADO] {nombre}")
+
+    print(f"Total agrupados: {total}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+
+    args = parser.parse_args()
+
+    process(args.year, args.cliente, args.month)
+Ejecución:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+
 1. Cambios SQL
 Ejecuta esto primero:
 SQL
