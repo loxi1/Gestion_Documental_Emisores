@@ -1,1 +1,138 @@
-Vamos a cerrar el flujo por etapas, sin volver a mezclar todo en un solo script. Empezamos con el motor reutilizable para clasificar páginas ya separadas y luego agrupamos/renombramos final.
+Crea este archivo:
+Plain text
+app/clasificar_paginas.py
+Python
+import argparse
+import re
+from pathlib import Path
+
+from core.db import get_cursor
+from core.document_enricher import enriquecer_documento
+
+
+TMP_DIR = Path("storage/tmp/pages")
+
+
+def normalize(txt: str) -> str:
+    txt = txt or ""
+    txt = txt.replace("\x00", "").replace("\u0000", "")
+    return re.sub(r"\s+", " ", txt.upper()).strip()
+
+
+def clean_text(txt: str) -> str:
+    return (txt or "").replace("\x00", "").replace("\u0000", "")
+
+
+def extract_os(text: str):
+    text = normalize(text)
+    if "ORDEN DE SERVICIO" not in text:
+        return None
+    m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text)
+    return m.group(1).zfill(6) if m else None
+
+
+def extract_oc(text: str):
+    text = normalize(text)
+    if "ORDEN DE COMPRA" not in text and " O/C " not in f" {text} ":
+        return None
+    m = re.search(r"(?:ORDEN\s+DE\s+COMPRA|O[/.-]?C)\s*:?\s*(\d{3,6})", text)
+    return m.group(1).zfill(6) if m else None
+
+
+def build_key(tipo, fields, text):
+    serie = fields.get("serie")
+    numero = fields.get("numero")
+    ruc = fields.get("ruc")
+
+    os_num = extract_os(text)
+    oc_num = extract_oc(text)
+
+    if tipo == "factura" and serie and numero and ruc:
+        return f"FACTURA|{ruc}|{serie}|{numero}", os_num, oc_num
+
+    if tipo == "guia_remision" and serie and numero and ruc:
+        return f"GUIA|{ruc}|{serie}|{numero}", os_num, oc_num
+
+    if os_num:
+        return f"OS|{os_num}", os_num, oc_num
+
+    if oc_num:
+        return f"OC|{oc_num}", os_num, oc_num
+
+    if tipo == "nota_ingreso" and numero:
+        return f"NI|{numero}", os_num, oc_num
+
+    return None, os_num, oc_num
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+    args = parser.parse_args()
+
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE estado = 'detectado'
+            ORDER BY archivo_fuente, pagina
+        """)
+        rows = cur.fetchall()
+
+    for row in rows:
+        page_pdf = TMP_DIR / f"{Path(row['archivo_fuente']).stem}_P{row['pagina']}.pdf"
+
+        if not page_pdf.exists():
+            print(f"[WARN] No existe fragmento: {page_pdf}")
+            continue
+
+        fields = enriquecer_documento(
+            pdf_path=page_pdf,
+            fallback_name=page_pdf.name,
+            ocr_tmp_dir=TMP_DIR,
+        )
+
+        tipo = fields.get("tipo_documental") or row["tipo_detectado"]
+        text = clean_text(fields.get("texto_extraido", ""))
+        clave, os_num, oc_num = build_key(tipo, fields, text)
+
+        with get_cursor(commit=True) as (_, cur):
+            cur.execute("""
+                UPDATE documentos_paginas
+                SET tipo_detectado = %s,
+                    serie = %s,
+                    numero = %s,
+                    ruc_emisor = %s,
+                    razon_social_emisor = %s,
+                    orden_servicio = %s,
+                    orden_compra = %s,
+                    clave_documental = %s,
+                    texto_extraido = %s,
+                    estado = 'clasificado'
+                WHERE id = %s
+            """, (
+                tipo,
+                fields.get("serie"),
+                fields.get("numero"),
+                fields.get("ruc"),
+                fields.get("razon_social") or fields.get("razon_social_emisor"),
+                os_num,
+                oc_num,
+                clave,
+                text[:10000],
+                row["id"],
+            ))
+
+        print(f"[OK] {row['archivo_fuente']} P{row['pagina']} -> {tipo} {clave}")
+
+    print("Clasificación finalizada.")
+
+
+if __name__ == "__main__":
+    main()
+Ejecuta:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+Luego ajustamos agrupar_fragmentos.py para leer estado='clasificado'.
