@@ -1,5 +1,3 @@
-https://teams.microsoft.com/meet/252528854703003?p=yCdBsrYNts6paho5Li
-
 1. Cambios SQL
 Ejecuta esto primero:
 SQL
