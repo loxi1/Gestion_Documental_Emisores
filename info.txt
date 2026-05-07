@@ -1,203 +1,305 @@
-Perfecto. Orden de trabajo:
-Bash
-python app/copiar_trabajo.py --year 2026 --cliente BBTEC --month 1
-python app/procesar_facturas_1_pagina.py --year 2026 --cliente BBTEC --month 1
-python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/reprocesar_final.py --year 2026 --cliente BBTEC --month 1
-Ahora toca crear este archivo:
-Plain text
-app/core/document_enricher.py
+1. Cambios SQL
+Ejecuta esto primero:
+SQL
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS fuente_texto VARCHAR(30);
+
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS pagina_digital BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS pagina_ocr BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS confianza_ocr NUMERIC(5,2);
+
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS imagen_generada BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE documentos_paginas
+ADD COLUMN IF NOT EXISTS tipo_detectado_basico VARCHAR(50);
+
+ALTER TABLE documentos_paginas
+DROP COLUMN IF EXISTS clave_documental;
+
+ALTER TABLE documentos_paginas
+DROP COLUMN IF EXISTS serie;
+
+ALTER TABLE documentos_paginas
+DROP COLUMN IF EXISTS numero;
+
+ALTER TABLE documentos_paginas
+DROP COLUMN IF EXISTS ruc_emisor;
+2. app/separar_fragmentos.py
+Código final:
 Python
+import argparse
+import re
 from pathlib import Path
 
-from core.pdf_text import extract_text_from_pdf
+import fitz
+
+from core.db import get_cursor
 from core.ocr_runner import run_ocr
-from core.classifier import extract_basic_fields
-from core.qr_reader import decode_qr_from_pdf
-from core.qr_parser import parse_qr_payload
+from core.classifier import detect_tipo_documental
 
 
-def should_use_qr(fields: dict) -> bool:
-    tipo = fields.get("tipo_documental")
-
-    if tipo not in ("factura", "guia_remision"):
-        return False
-
-    return (
-        not fields.get("serie")
-        or not fields.get("numero")
-        or not fields.get("ruc")
-        or not fields.get("fecha_emision")
-    )
+BASE_TRABAJO = Path("data/trabajo")
+TMP_DIR = Path("storage/tmp/pages")
 
 
-def enriquecer_documento(pdf_path: Path, fallback_name: str, ocr_tmp_dir: Path) -> dict:
-    text = extract_text_from_pdf(pdf_path)
-    fuente = "pdf_text"
-
-    ocr_pdf = None
-
-    if not text.strip():
-        ocr_pdf = ocr_tmp_dir / f"{pdf_path.stem}_ocr.pdf"
-
-        if run_ocr(pdf_path, ocr_pdf):
-            text = extract_text_from_pdf(ocr_pdf)
-            fuente = "ocr"
-
-    fields = extract_basic_fields(text, fallback_name)
-    fields["fuente_datos"] = fuente
-    fields["texto_extraido"] = text
-
-    if should_use_qr(fields):
-        qr_candidates = decode_qr_from_pdf(ocr_pdf or pdf_path, max_pages=1, dpi=280)
-
-        for candidate in qr_candidates:
-            parsed = parse_qr_payload(candidate)
-
-            if not parsed:
-                continue
-
-            fields["qr_data"] = parsed
-            fields["serie"] = fields.get("serie") or parsed.get("serie")
-            fields["numero"] = fields.get("numero") or parsed.get("numero")
-            fields["ruc"] = fields.get("ruc") or parsed.get("ruc_emisor")
-            fields["fecha_emision"] = fields.get("fecha_emision") or parsed.get("fecha_emision")
-            fields["importe"] = fields.get("importe") or parsed.get("importe")
-            fields["fuente_datos"] = "qr"
-            break
-
-    return fields
-Luego creamos:
-Plain text
-app/clasificar_paginas.py
-Ese será el que recorra documentos_paginas, lea cada PDF de página separada, use document_enricher.py y actualice:
-Plain text
-tipo_detectado
-serie
-numero
-ruc_emisor
-razon_social_emisor
-orden_servicio
-orden_compra
-clave_documental
-texto_extraido
-fuente_datos
-Siguiente paso: te paso clasificar_paginas.py.
+def normalize(txt: str) -> str:
+    txt = txt or ""
+    txt = txt.replace("\x00", "").replace("\u0000", "")
+    return re.sub(r"\s+", " ", txt.upper()).strip()
 
 
-Perfecto. Orden de trabajo:
-Bash
-python app/copiar_trabajo.py --year 2026 --cliente BBTEC --month 1
-python app/procesar_facturas_1_pagina.py --year 2026 --cliente BBTEC --month 1
-python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/reprocesar_final.py --year 2026 --cliente BBTEC --month 1
-Ahora toca crear este archivo:
-Plain text
-app/core/document_enricher.py
+def limpiar_para_postgres(txt: str) -> str:
+    if not txt:
+        return ""
+    return txt.replace("\x00", "").replace("\u0000", "")
+
+
+def extract_asiento(filename: str) -> str:
+    m = re.search(r"^(04-\d{4})", filename)
+    return m.group(1) if m else "SIN_ASIENTO"
+
+
+def extract_text(pdf_path: Path) -> str:
+    text = []
+
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text.append(page.get_text("text"))
+
+    return "\n".join(text)
+
+
+def split_page(source_pdf: Path, page_index: int, output_pdf: Path):
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+
+    src = fitz.open(source_pdf)
+    dst = fitz.open()
+
+    dst.insert_pdf(src, from_page=page_index, to_page=page_index)
+    dst.save(output_pdf)
+
+    dst.close()
+    src.close()
+
+
+def is_reverso_page(text: str) -> bool:
+    text = normalize(text)
+
+    if len(text) < 80:
+        return True
+
+    if "USUARIO:" in text and len(text) < 300:
+        return True
+
+    return False
+
+
+def process(year: int, cliente: str, month: int):
+    pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
+
+    pdfs = sorted(pendientes.glob("*.pdf"))
+
+    print(f"Carpeta pendientes: {pendientes}")
+    print(f"PDF pendientes: {len(pdfs)}")
+
+    for pdf in pdfs:
+        asiento = extract_asiento(pdf.name)
+
+        with fitz.open(pdf) as doc:
+            total_pages = doc.page_count
+
+        print(f"\n[PDF] {pdf.name} ({total_pages} páginas)")
+
+        for page_index in range(total_pages):
+            page_pdf = TMP_DIR / f"{pdf.stem}_P{page_index + 1}.pdf"
+            page_ocr = TMP_DIR / f"{pdf.stem}_P{page_index + 1}_OCR.pdf"
+
+            split_page(pdf, page_index, page_pdf)
+
+            texto_pdf = extract_text(page_pdf)
+
+            fuente_texto = "pdf_native"
+            pagina_digital = False
+            pagina_ocr = False
+
+            text = texto_pdf
+
+            if len(normalize(texto_pdf)) > 30:
+                pagina_digital = True
+            else:
+                ok = run_ocr(page_pdf, page_ocr)
+
+                if ok:
+                    text = extract_text(page_ocr)
+                    fuente_texto = "ocr"
+                    pagina_ocr = True
+
+            text_clean = limpiar_para_postgres(text)
+            text_u = normalize(text_clean)
+
+            tipo_basico = detect_tipo_documental(text_u, pdf.name)
+
+            reverso = is_reverso_page(text_u)
+
+            print(
+                f"  Página {page_index + 1}: "
+                f"tipo={tipo_basico} "
+                f"fuente={fuente_texto} "
+                f"digital={pagina_digital} "
+                f"ocr={pagina_ocr} "
+                f"reverso={reverso}"
+            )
+
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute(
+                    """
+                    INSERT INTO documentos_paginas (
+                        asiento_contable,
+                        archivo_fuente,
+                        pagina,
+                        tipo_detectado_basico,
+                        texto_extraido,
+                        fuente_texto,
+                        pagina_digital,
+                        pagina_ocr,
+                        es_reverso,
+                        imagen_generada,
+                        estado
+                    )
+                    VALUES (
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,'detectado'
+                    )
+                    ON CONFLICT (archivo_fuente, pagina)
+                    DO UPDATE SET
+                        tipo_detectado_basico = EXCLUDED.tipo_detectado_basico,
+                        texto_extraido = EXCLUDED.texto_extraido,
+                        fuente_texto = EXCLUDED.fuente_texto,
+                        pagina_digital = EXCLUDED.pagina_digital,
+                        pagina_ocr = EXCLUDED.pagina_ocr,
+                        es_reverso = EXCLUDED.es_reverso,
+                        estado = 'detectado'
+                    """,
+                    (
+                        asiento,
+                        pdf.name,
+                        page_index + 1,
+                        tipo_basico,
+                        text_clean[:10000],
+                        fuente_texto,
+                        pagina_digital,
+                        pagina_ocr,
+                        reverso,
+                    ),
+                )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+
+    args = parser.parse_args()
+
+    process(args.year, args.cliente, args.month)
+3. app/document_enricher.py
+Código final:
 Python
-from pathlib import Path
+import re
 
-from core.pdf_text import extract_text_from_pdf
-from core.ocr_runner import run_ocr
-from core.classifier import extract_basic_fields
-from core.qr_reader import decode_qr_from_pdf
-from core.qr_parser import parse_qr_payload
+from core.db import get_cursor
 
 
-def should_use_qr(fields: dict) -> bool:
-    tipo = fields.get("tipo_documental")
-
-    if tipo not in ("factura", "guia_remision"):
-        return False
-
-    return (
-        not fields.get("serie")
-        or not fields.get("numero")
-        or not fields.get("ruc")
-        or not fields.get("fecha_emision")
-    )
+def normalize(txt: str) -> str:
+    return re.sub(r"\s+", " ", (txt or "").upper()).strip()
 
 
-def enriquecer_documento(pdf_path: Path, fallback_name: str, ocr_tmp_dir: Path) -> dict:
-    text = extract_text_from_pdf(pdf_path)
-    fuente = "pdf_text"
+def extract_factura_data(text):
+    m = re.search(r"\b(F[A-Z0-9]{2,4})[- ]?0*(\d+)\b", text)
+    ruc = re.search(r"\b(10|20)\d{9}\b", text)
 
-    ocr_pdf = None
+    if not m:
+        return None
 
-    if not text.strip():
-        ocr_pdf = ocr_tmp_dir / f"{pdf_path.stem}_ocr.pdf"
+    return {
+        "serie": m.group(1).upper(),
+        "numero": m.group(2),
+        "ruc": ruc.group(0) if ruc else None,
+    }
 
-        if run_ocr(pdf_path, ocr_pdf):
-            text = extract_text_from_pdf(ocr_pdf)
-            fuente = "ocr"
 
-    fields = extract_basic_fields(text, fallback_name)
-    fields["fuente_datos"] = fuente
-    fields["texto_extraido"] = text
+def enrich_pages():
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute(
+            """
+            SELECT *
+            FROM documentos_paginas
+            WHERE estado = 'detectado'
+            ORDER BY archivo_fuente, pagina
+            """
+        )
 
-    if should_use_qr(fields):
-        qr_candidates = decode_qr_from_pdf(ocr_pdf or pdf_path, max_pages=1, dpi=280)
+        rows = cur.fetchall()
 
-        for candidate in qr_candidates:
-            parsed = parse_qr_payload(candidate)
+    for row in rows:
+        text = normalize(row["texto_extraido"])
 
-            if not parsed:
-                continue
+        clave = None
+        serie = None
+        numero = None
+        ruc = None
 
-            fields["qr_data"] = parsed
-            fields["serie"] = fields.get("serie") or parsed.get("serie")
-            fields["numero"] = fields.get("numero") or parsed.get("numero")
-            fields["ruc"] = fields.get("ruc") or parsed.get("ruc_emisor")
-            fields["fecha_emision"] = fields.get("fecha_emision") or parsed.get("fecha_emision")
-            fields["importe"] = fields.get("importe") or parsed.get("importe")
-            fields["fuente_datos"] = "qr"
-            break
+        tipo = row["tipo_detectado_basico"]
 
-    return fields
-Luego creamos:
-Plain text
-app/clasificar_paginas.py
-Ese será el que recorra documentos_paginas, lea cada PDF de página separada, use document_enricher.py y actualice:
-Plain text
-tipo_detectado
-serie
-numero
-ruc_emisor
-razon_social_emisor
-orden_servicio
-orden_compra
-clave_documental
-texto_extraido
-fuente_datos
-Siguiente paso: te paso clasificar_paginas.py.
-Sí tendría participación, pero después.
-Para este MVP yo lo dejaría así:
-Plain text
-Fase 1 — Python local
-Carpeta origen → process_batch.py → clasifica/renombra/registra en PostgreSQL
-Luego n8n entra como orquestador, no como procesador principal:
-Plain text
-Fase 2 — n8n
-Cron / formulario / webhook
-→ llama script Python o API Python
-→ notifica resultado
-→ mueve alertas a revisión
-→ envía correo/Teams
-Mi recomendación:
-Plain text
-Python = cerebro del procesamiento documental
-PostgreSQL = trazabilidad
-n8n = automatización y coordinación
-Portal web = validación humana
-No pondría la lógica fuerte en n8n porque:
-el OCR/QR y reglas complejas son más mantenibles en Python;
-n8n se vuelve difícil de depurar si metes mucha lógica;
-Python lo puedes versionar, probar y subir a GitHub mejor.
-Para presentarlo al gerente:
-Plain text
-Primero entregamos un MVP ejecutable en Python.
-Luego, con servidor aprobado, n8n automatiza la ejecución programada y las notificaciones.
+        if tipo == "factura":
+            data = extract_factura_data(text)
+
+            if data:
+                serie = data["serie"]
+                numero = data["numero"]
+                ruc = data["ruc"]
+
+                clave = f"FACTURA|{ruc}|{serie}|{numero}"
+
+        elif tipo == "guia_remision":
+            pass
+
+        elif tipo == "orden_servicio":
+            pass
+
+        elif tipo == "orden_compra":
+            pass
+
+        elif tipo == "nota_ingreso":
+            pass
+
+        with get_cursor(commit=True) as (_, cur):
+            cur.execute(
+                """
+                UPDATE documentos_paginas
+                SET
+                    clave_documental = %s
+                WHERE id = %s
+                """,
+                (
+                    clave,
+                    row["id"],
+                ),
+            )
+
+
+if __name__ == "__main__":
+    enrich_pages()
+4. Ejecución correcta
+Bash
+python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/document_enricher.py
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+Ahora sí el OCR se hace solo una vez por página.
