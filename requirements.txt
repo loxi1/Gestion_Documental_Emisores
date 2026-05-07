@@ -1,7 +1,10 @@
-psycopg2-binary==2.9.10
-python-dotenv==1.0.1
-pypdf==5.4.0
-pdf2image==1.17.0
-Pillow==10.4.0
-opencv-python==4.10.0.84
 numpy==2.1.1
+opencv-python==4.10.0.84
+pdf2image==1.17.0
+pillow==10.4.0
+psycopg2-binary==2.9.10
+PyMuPDF==1.27.2.3
+pypdf==5.4.0
+python-dotenv==1.0.1
+python-slugify==8.0.4
+text-unidecode==1.3
