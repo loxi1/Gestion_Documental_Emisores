@@ -27,24 +27,27 @@ def clean_name(text: str) -> str:
 def is_guia_text(text: str, filename: str = "") -> bool:
     text_u = norm(text)
     name_u = norm(filename)
-
     compact = compact_text(text_u)
 
-    tiene_palabra = (
-        "GUIADEREMISION" in compact
-        or "GUIAREMISION" in compact
-        or re.search(r"GUIA\s+DE\s+REMISION", text_u, re.I)
+    tiene_guia_fuerte = bool(
+        "GUIADEREMISIONELECTRONICA" in compact
+        or "GUIAREMISIONELECTRONICA" in compact
+        or "REPRESENTACIONIMPRESAGUIADEREMISION" in compact
+        or "GUIADEREMISIONREMITENTE" in compact
+        or re.search(r"GUIA\s+DE\s+REMISION\s+ELECTRONICA", text_u, re.I)
     )
 
-    tiene_serie = bool(
-        re.search(r"\b(T\d{3,4})\s*[- ]\s*\d+\b", text_u)
-        or re.search(r"\b(TG\d{2,4})\s*[- ]\s*\d+\b", text_u)
-        or re.search(r"\b(EG\d{2,4})\s*[- ]\s*\d+\b", text_u)
-        or re.search(r"\b(EGO\d{2,4})\s*[- ]\s*\d+\b", text_u)
-        or re.search(r"\b(GR\d{2,4})\s*[- ]\s*\d+\b", text_u)
+    tiene_serie_guia = bool(
+        re.search(r"\bT\d{3,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bTG\d{2,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bTGO\d{1,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bEG\d{2,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bEGO\d{1,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bGR\d{2,4}\s*[- ]\s*\d{1,10}\b", text_u)
+        or re.search(r"\bT\d{3,4}\s*[- ]\s*\d{1,10}\b", name_u)
     )
 
-    return tiene_palabra or tiene_serie
+    return tiene_guia_fuerte or tiene_serie_guia
 
 
 def is_orden_servicio_text(text: str) -> bool:
@@ -106,9 +109,11 @@ def is_pago_text(text: str) -> bool:
 def detect_tipo(text: str, archivo_fuente: str = "") -> str:
     t = norm(text)
 
-    # Orden importante: primero documentos específicos
-    if is_guia_text(t, archivo_fuente):
-        return "guia_remision"
+    if is_proforma_text(t, archivo_fuente):
+        return "proforma"
+
+    if is_nota_ingreso_text(t):
+        return "nota_ingreso"
 
     if is_orden_servicio_text(t):
         return "orden_servicio"
@@ -116,14 +121,10 @@ def detect_tipo(text: str, archivo_fuente: str = "") -> str:
     if is_orden_compra_text(t):
         return "orden_compra"
 
-    if is_nota_ingreso_text(t):
-        return "nota_ingreso"
+    if is_guia_text(t, archivo_fuente):
+        return "guia_remision"
 
-    if is_proforma_text(t, archivo_fuente):
-        return "proforma"
-
-    # Factura: se permite por texto, pero datos se sacan del nombre
-    if "FACTURA" in t:
+    if "FACTURA" in t or "FACTURA ELECTRONICA" in t:
         return "factura"
 
     if is_pago_text(t):
