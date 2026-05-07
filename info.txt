@@ -1,138 +1,203 @@
-Crea este archivo:
+Perfecto. Orden de trabajo:
+Bash
+python app/copiar_trabajo.py --year 2026 --cliente BBTEC --month 1
+python app/procesar_facturas_1_pagina.py --year 2026 --cliente BBTEC --month 1
+python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/reprocesar_final.py --year 2026 --cliente BBTEC --month 1
+Ahora toca crear este archivo:
 Plain text
-app/clasificar_paginas.py
+app/core/document_enricher.py
 Python
-import argparse
-import re
 from pathlib import Path
 
-from core.db import get_cursor
-from core.document_enricher import enriquecer_documento
+from core.pdf_text import extract_text_from_pdf
+from core.ocr_runner import run_ocr
+from core.classifier import extract_basic_fields
+from core.qr_reader import decode_qr_from_pdf
+from core.qr_parser import parse_qr_payload
 
 
-TMP_DIR = Path("storage/tmp/pages")
+def should_use_qr(fields: dict) -> bool:
+    tipo = fields.get("tipo_documental")
+
+    if tipo not in ("factura", "guia_remision"):
+        return False
+
+    return (
+        not fields.get("serie")
+        or not fields.get("numero")
+        or not fields.get("ruc")
+        or not fields.get("fecha_emision")
+    )
 
 
-def normalize(txt: str) -> str:
-    txt = txt or ""
-    txt = txt.replace("\x00", "").replace("\u0000", "")
-    return re.sub(r"\s+", " ", txt.upper()).strip()
+def enriquecer_documento(pdf_path: Path, fallback_name: str, ocr_tmp_dir: Path) -> dict:
+    text = extract_text_from_pdf(pdf_path)
+    fuente = "pdf_text"
+
+    ocr_pdf = None
+
+    if not text.strip():
+        ocr_pdf = ocr_tmp_dir / f"{pdf_path.stem}_ocr.pdf"
+
+        if run_ocr(pdf_path, ocr_pdf):
+            text = extract_text_from_pdf(ocr_pdf)
+            fuente = "ocr"
+
+    fields = extract_basic_fields(text, fallback_name)
+    fields["fuente_datos"] = fuente
+    fields["texto_extraido"] = text
+
+    if should_use_qr(fields):
+        qr_candidates = decode_qr_from_pdf(ocr_pdf or pdf_path, max_pages=1, dpi=280)
+
+        for candidate in qr_candidates:
+            parsed = parse_qr_payload(candidate)
+
+            if not parsed:
+                continue
+
+            fields["qr_data"] = parsed
+            fields["serie"] = fields.get("serie") or parsed.get("serie")
+            fields["numero"] = fields.get("numero") or parsed.get("numero")
+            fields["ruc"] = fields.get("ruc") or parsed.get("ruc_emisor")
+            fields["fecha_emision"] = fields.get("fecha_emision") or parsed.get("fecha_emision")
+            fields["importe"] = fields.get("importe") or parsed.get("importe")
+            fields["fuente_datos"] = "qr"
+            break
+
+    return fields
+Luego creamos:
+Plain text
+app/clasificar_paginas.py
+Ese será el que recorra documentos_paginas, lea cada PDF de página separada, use document_enricher.py y actualice:
+Plain text
+tipo_detectado
+serie
+numero
+ruc_emisor
+razon_social_emisor
+orden_servicio
+orden_compra
+clave_documental
+texto_extraido
+fuente_datos
+Siguiente paso: te paso clasificar_paginas.py.
 
 
-def clean_text(txt: str) -> str:
-    return (txt or "").replace("\x00", "").replace("\u0000", "")
-
-
-def extract_os(text: str):
-    text = normalize(text)
-    if "ORDEN DE SERVICIO" not in text:
-        return None
-    m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text)
-    return m.group(1).zfill(6) if m else None
-
-
-def extract_oc(text: str):
-    text = normalize(text)
-    if "ORDEN DE COMPRA" not in text and " O/C " not in f" {text} ":
-        return None
-    m = re.search(r"(?:ORDEN\s+DE\s+COMPRA|O[/.-]?C)\s*:?\s*(\d{3,6})", text)
-    return m.group(1).zfill(6) if m else None
-
-
-def build_key(tipo, fields, text):
-    serie = fields.get("serie")
-    numero = fields.get("numero")
-    ruc = fields.get("ruc")
-
-    os_num = extract_os(text)
-    oc_num = extract_oc(text)
-
-    if tipo == "factura" and serie and numero and ruc:
-        return f"FACTURA|{ruc}|{serie}|{numero}", os_num, oc_num
-
-    if tipo == "guia_remision" and serie and numero and ruc:
-        return f"GUIA|{ruc}|{serie}|{numero}", os_num, oc_num
-
-    if os_num:
-        return f"OS|{os_num}", os_num, oc_num
-
-    if oc_num:
-        return f"OC|{oc_num}", os_num, oc_num
-
-    if tipo == "nota_ingreso" and numero:
-        return f"NI|{numero}", os_num, oc_num
-
-    return None, os_num, oc_num
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--cliente", required=True)
-    parser.add_argument("--month", type=int, required=True)
-    args = parser.parse_args()
-
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM documentos_paginas
-            WHERE estado = 'detectado'
-            ORDER BY archivo_fuente, pagina
-        """)
-        rows = cur.fetchall()
-
-    for row in rows:
-        page_pdf = TMP_DIR / f"{Path(row['archivo_fuente']).stem}_P{row['pagina']}.pdf"
-
-        if not page_pdf.exists():
-            print(f"[WARN] No existe fragmento: {page_pdf}")
-            continue
-
-        fields = enriquecer_documento(
-            pdf_path=page_pdf,
-            fallback_name=page_pdf.name,
-            ocr_tmp_dir=TMP_DIR,
-        )
-
-        tipo = fields.get("tipo_documental") or row["tipo_detectado"]
-        text = clean_text(fields.get("texto_extraido", ""))
-        clave, os_num, oc_num = build_key(tipo, fields, text)
-
-        with get_cursor(commit=True) as (_, cur):
-            cur.execute("""
-                UPDATE documentos_paginas
-                SET tipo_detectado = %s,
-                    serie = %s,
-                    numero = %s,
-                    ruc_emisor = %s,
-                    razon_social_emisor = %s,
-                    orden_servicio = %s,
-                    orden_compra = %s,
-                    clave_documental = %s,
-                    texto_extraido = %s,
-                    estado = 'clasificado'
-                WHERE id = %s
-            """, (
-                tipo,
-                fields.get("serie"),
-                fields.get("numero"),
-                fields.get("ruc"),
-                fields.get("razon_social") or fields.get("razon_social_emisor"),
-                os_num,
-                oc_num,
-                clave,
-                text[:10000],
-                row["id"],
-            ))
-
-        print(f"[OK] {row['archivo_fuente']} P{row['pagina']} -> {tipo} {clave}")
-
-    print("Clasificación finalizada.")
-
-
-if __name__ == "__main__":
-    main()
-Ejecuta:
+Perfecto. Orden de trabajo:
 Bash
+python app/copiar_trabajo.py --year 2026 --cliente BBTEC --month 1
+python app/procesar_facturas_1_pagina.py --year 2026 --cliente BBTEC --month 1
+python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
 python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-Luego ajustamos agrupar_fragmentos.py para leer estado='clasificado'.
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/reprocesar_final.py --year 2026 --cliente BBTEC --month 1
+Ahora toca crear este archivo:
+Plain text
+app/core/document_enricher.py
+Python
+from pathlib import Path
+
+from core.pdf_text import extract_text_from_pdf
+from core.ocr_runner import run_ocr
+from core.classifier import extract_basic_fields
+from core.qr_reader import decode_qr_from_pdf
+from core.qr_parser import parse_qr_payload
+
+
+def should_use_qr(fields: dict) -> bool:
+    tipo = fields.get("tipo_documental")
+
+    if tipo not in ("factura", "guia_remision"):
+        return False
+
+    return (
+        not fields.get("serie")
+        or not fields.get("numero")
+        or not fields.get("ruc")
+        or not fields.get("fecha_emision")
+    )
+
+
+def enriquecer_documento(pdf_path: Path, fallback_name: str, ocr_tmp_dir: Path) -> dict:
+    text = extract_text_from_pdf(pdf_path)
+    fuente = "pdf_text"
+
+    ocr_pdf = None
+
+    if not text.strip():
+        ocr_pdf = ocr_tmp_dir / f"{pdf_path.stem}_ocr.pdf"
+
+        if run_ocr(pdf_path, ocr_pdf):
+            text = extract_text_from_pdf(ocr_pdf)
+            fuente = "ocr"
+
+    fields = extract_basic_fields(text, fallback_name)
+    fields["fuente_datos"] = fuente
+    fields["texto_extraido"] = text
+
+    if should_use_qr(fields):
+        qr_candidates = decode_qr_from_pdf(ocr_pdf or pdf_path, max_pages=1, dpi=280)
+
+        for candidate in qr_candidates:
+            parsed = parse_qr_payload(candidate)
+
+            if not parsed:
+                continue
+
+            fields["qr_data"] = parsed
+            fields["serie"] = fields.get("serie") or parsed.get("serie")
+            fields["numero"] = fields.get("numero") or parsed.get("numero")
+            fields["ruc"] = fields.get("ruc") or parsed.get("ruc_emisor")
+            fields["fecha_emision"] = fields.get("fecha_emision") or parsed.get("fecha_emision")
+            fields["importe"] = fields.get("importe") or parsed.get("importe")
+            fields["fuente_datos"] = "qr"
+            break
+
+    return fields
+Luego creamos:
+Plain text
+app/clasificar_paginas.py
+Ese será el que recorra documentos_paginas, lea cada PDF de página separada, use document_enricher.py y actualice:
+Plain text
+tipo_detectado
+serie
+numero
+ruc_emisor
+razon_social_emisor
+orden_servicio
+orden_compra
+clave_documental
+texto_extraido
+fuente_datos
+Siguiente paso: te paso clasificar_paginas.py.
+Sí tendría participación, pero después.
+Para este MVP yo lo dejaría así:
+Plain text
+Fase 1 — Python local
+Carpeta origen → process_batch.py → clasifica/renombra/registra en PostgreSQL
+Luego n8n entra como orquestador, no como procesador principal:
+Plain text
+Fase 2 — n8n
+Cron / formulario / webhook
+→ llama script Python o API Python
+→ notifica resultado
+→ mueve alertas a revisión
+→ envía correo/Teams
+Mi recomendación:
+Plain text
+Python = cerebro del procesamiento documental
+PostgreSQL = trazabilidad
+n8n = automatización y coordinación
+Portal web = validación humana
+No pondría la lógica fuerte en n8n porque:
+el OCR/QR y reglas complejas son más mantenibles en Python;
+n8n se vuelve difícil de depurar si metes mucha lógica;
+Python lo puedes versionar, probar y subir a GitHub mejor.
+Para presentarlo al gerente:
+Plain text
+Primero entregamos un MVP ejecutable en Python.
+Luego, con servidor aprobado, n8n automatiza la ejecución programada y las notificaciones.
