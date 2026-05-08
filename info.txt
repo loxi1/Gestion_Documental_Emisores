@@ -1,25 +1,20 @@
-Sí, esa regla es mucho mejor y debe ser dinámica por cliente.
-Regla final OC/OS
-Para detectar OC:
-Plain text
-Orden de Compra N*:002912
-+ nombre oficial del cliente destino
-+ RUC del cliente destino
-Para detectar OS:
-Plain text
-Orden de Servicio N*:000229
-+ nombre oficial del cliente destino
-+ RUC del cliente destino
-Así ya no dependes solo de BBTEC.
-Cambio necesario en document_enricher.py
-Primero, en clasificar_paginas.py debes pasar también el cliente:
+Sí. Estos son los cambios finales por archivo.
+1. app/clasificar_paginas.py
+Cambia esta parte:
+Python
+data = enrich_page(
+    row["texto_extraido"] or "",
+    row["archivo_fuente"]
+)
+por:
 Python
 data = enrich_page(
     row["texto_extraido"] or "",
     row["archivo_fuente"],
     cliente
 )
-Luego en document_enricher.py, agrega este mapa:
+2. app/core/document_enricher.py
+Agrega/actualiza estas funciones:
 Python
 CLIENTES_DESTINO = {
     "BBTEC": {
@@ -47,17 +42,17 @@ CLIENTES_DESTINO = {
         "ruc": "20609856140",
     },
 }
-Función helper
-Python
+
+
 def tiene_cliente_destino(text: str, cliente: str) -> bool:
     t = norm(text)
-    data = CLIENTES_DESTINO.get(cliente.upper())
+    data = CLIENTES_DESTINO.get((cliente or "").upper())
 
     if not data:
         return False
 
     return data["nombre"] in t and data["ruc"] in t
-OC final
+3. Reemplaza is_orden_compra_text
 Python
 def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
     t = norm(text)
@@ -75,7 +70,7 @@ def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
     )
 
     return tiene_titulo_oc and tiene_cliente_destino(t, cliente)
-OS final
+4. Reemplaza is_orden_servicio_text
 Python
 def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
     t = norm(text)
@@ -93,30 +88,7 @@ def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
     )
 
     return tiene_titulo_os and tiene_cliente_destino(t, cliente)
-Extract OS corregido
-Python
-def extract_os(text: str, cliente: str = "BBTEC") -> dict:
-    t = norm(text)
-
-    if not is_orden_servicio_text(t, cliente):
-        return {"numero": None, "clave": None}
-
-    m = re.search(
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*(\d{3,8})",
-        t,
-        re.I,
-    )
-
-    if not m:
-        return {"numero": None, "clave": None}
-
-    numero = m.group(1).zfill(6)
-
-    return {
-        "numero": numero,
-        "clave": f"OS|{numero}",
-    }
-Extract OC corregido
+5. Reemplaza extract_oc
 Python
 def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
     t = norm(text)
@@ -139,8 +111,30 @@ def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
         "numero": numero,
         "clave": f"OC|{numero}",
     }
-En detect_tipo()
-Debe recibir cliente:
+6. Reemplaza extract_os
+Python
+def extract_os(text: str, cliente: str = "BBTEC") -> dict:
+    t = norm(text)
+
+    if not is_orden_servicio_text(t, cliente):
+        return {"numero": None, "clave": None}
+
+    m = re.search(
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+        t,
+        re.I,
+    )
+
+    if not m:
+        return {"numero": None, "clave": None}
+
+    numero = m.group(1).zfill(6)
+
+    return {
+        "numero": numero,
+        "clave": f"OS|{numero}",
+    }
+7. Reemplaza detect_tipo
 Python
 def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
     t = norm(text)
@@ -168,18 +162,23 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
         return "pago"
 
     return "otro"
-En enrich_page()
+8. Reemplaza cabecera de enrich_page
 Python
 def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
     tipo = detect_tipo(text, archivo_fuente, cliente)
-Y donde llama OC/OS:
+Y dentro de enrich_page, cambia OC/OS:
 Python
 elif tipo == "orden_servicio":
     os_data = extract_os(text, cliente)
+    data.update({
+        "orden_servicio": os_data["numero"],
+        "clave_documental": os_data["clave"],
+    })
 
 elif tipo == "orden_compra":
     oc_data = extract_oc(text, cliente)
-Con esto, Orden de Servicio N*:000229 ya saldrá como:
-Plain text
-OS|000229
-y no tomará SIM PPTO N° 008.
+    data.update({
+        "orden_compra": oc_data["numero"],
+        "clave_documental": oc_data["clave"],
+    })
+Con esto, Orden de Servicio N*:000229 y Orden de Compra N*:002912 se detectan solo si pertenecen al cliente destino correcto.
