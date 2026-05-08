@@ -19,7 +19,8 @@ def process(year: int, cliente: str, month: int):
     for row in rows:
         data = enrich_page(
             row["texto_extraido"] or "",
-            row["archivo_fuente"]
+            row["archivo_fuente"],
+            cliente
         )
 
         requiere_qr = (

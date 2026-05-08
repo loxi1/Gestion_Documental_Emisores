@@ -4,6 +4,33 @@ from slugify import slugify
 
 from core.text_utils import normalize_text
 
+CLIENTES_DESTINO = {
+    "BBTEC": {
+        "nombre": "BB TECNOLOGIA INDUSTRIAL",
+        "ruc": "20299922821",
+    },
+    "BBTI": {
+        "nombre": "BBTI",
+        "ruc": "20565747356",
+    },
+    "CIMA": {
+        "nombre": "CONSORCIO CIMA ENERGY",
+        "ruc": "20613521004",
+    },
+    "TARMA": {
+        "nombre": "CONSORCIO ILUMINACION TARMA",
+        "ruc": "20614307197",
+    },
+    "HUANCA": {
+        "nombre": "CONSORCIO HUANCAVELICA",
+        "ruc": "20612122416",
+    },
+    "KIMBIRI": {
+        "nombre": "CONSORCIO KIMBIRI",
+        "ruc": "20609856140",
+    },
+}
+
 
 def norm(text: str) -> str:
     return normalize_text(text or "")
@@ -50,17 +77,25 @@ def is_guia_text(text: str, filename: str = "") -> bool:
     return tiene_guia_fuerte or tiene_serie_guia
 
 
-def is_orden_servicio_text(text: str) -> bool:
+def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
     t = norm(text)
     c = compact_text(t)
 
-    return bool(
-        "ORDENDESERVICIO" in c
-        or re.search(r"ORDEN\s+DE\s+SERVICIO", t, re.I)
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
+        return False
+
+    tiene_titulo_os = bool(
+        re.search(
+            r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*\d{3,8}",
+            t,
+            re.I,
+        )
     )
 
+    return tiene_titulo_os and tiene_cliente_destino(t, cliente)
 
-def is_orden_compra_text(text: str) -> bool:
+
+def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
     t = norm(text)
     c = compact_text(t)
 
@@ -74,6 +109,8 @@ def is_orden_compra_text(text: str) -> bool:
             re.I,
         )
     )
+
+    return tiene_titulo_oc and tiene_cliente_destino(t, cliente)
 
     tiene_empresa = "BB TECNOLOGIA INDUSTRIAL" in t
     tiene_ruc_empresa = "20299922821" in t
@@ -116,7 +153,7 @@ def is_pago_text(text: str) -> bool:
     )
 
 
-def detect_tipo (text: str, archivo_fuente: str = "") -> str:
+def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
     t = norm(text)
     c = compact_text(t)
 
@@ -132,10 +169,10 @@ def detect_tipo (text: str, archivo_fuente: str = "") -> str:
     if is_guia_text(t, archivo_fuente):
         return "guia_remision"
 
-    if is_orden_servicio_text(t):
+    if is_orden_servicio_text(t, cliente):
         return "orden_servicio"
 
-    if is_orden_compra_text(t):
+    if is_orden_compra_text(t, cliente):
         return "orden_compra"
 
     if is_pago_text(t):
@@ -274,34 +311,33 @@ def extract_guia(text: str, filename: str = "") -> dict:
     }
 
 
-def extract_os(text: str) -> dict:
+def extract_os(text: str, cliente: str = "BBTEC") -> dict:
     t = norm(text)
 
-    if not is_orden_servicio_text(t):
+    if not is_orden_servicio_text(t, cliente):
         return {"numero": None, "clave": None}
 
-    patrones = [
-        r"\bN[°º*?]?\s*:?\s*(\d{3,8})\b",
-        r"ORDEN\s+DE\s+SERVICIO\s*(?:N[°º*?])?\s*:?\s*(\d{3,8})\b",
-        r"\bOS\s*:?\s*(\d{3,8})\b",
-    ]
+    m = re.search(
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+        t,
+        re.I,
+    )
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I)
-        if m:
-            numero = m.group(1).zfill(6)
-            return {
-                "numero": numero,
-                "clave": f"OS|{numero}",
-            }
+    if not m:
+        return {"numero": None, "clave": None}
 
-    return {"numero": None, "clave": None}
+    numero = m.group(1).zfill(6)
+
+    return {
+        "numero": numero,
+        "clave": f"OS|{numero}",
+    }
 
 
-def extract_oc(text: str) -> dict:
+def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
     t = norm(text)
 
-    if not is_orden_compra_text(t):
+    if not is_orden_compra_text(t, cliente):
         return {"numero": None, "clave": None}
 
     m = re.search(
@@ -383,14 +419,14 @@ def enrich_page(text: str, archivo_fuente: str = "") -> dict:
         })
 
     elif tipo == "orden_servicio":
-        os_data = extract_os(text)
+        os_data = extract_os(text, cliente)
         data.update({
             "orden_servicio": os_data["numero"],
             "clave_documental": os_data["clave"],
         })
 
     elif tipo == "orden_compra":
-        oc_data = extract_oc(text)
+        oc_data = extract_oc(text, cliente)
         data.update({
             "orden_compra": oc_data["numero"],
             "clave_documental": oc_data["clave"],
@@ -404,3 +440,12 @@ def enrich_page(text: str, archivo_fuente: str = "") -> dict:
         })
 
     return data
+
+def tiene_cliente_destino(text: str, cliente: str) -> bool:
+    t = norm(text)
+    data = CLIENTES_DESTINO.get((cliente or "").upper())
+
+    if not data:
+        return False
+
+    return data["nombre"] in t and data["ruc"] in t
