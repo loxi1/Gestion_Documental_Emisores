@@ -1,216 +1,105 @@
-Reemplaza todo app/distribuir_agrupados.py por este:
+Sí, se puede mejorar y sí conviene hacerlo ahora.
+1. Corregir agrupamiento de facturas repetidas
+Problema actual:
+Plain text
+04-0059 FACTURA ... P001-P004
+No debe unir páginas separadas si entre medio hay OC/guía/NI.
+Regla nueva en agrupar_fragmentos.py:
+Plain text
+Agrupar por bloques consecutivos.
+Si la misma clave aparece en P1 y P4, pero P2/P3 son otros documentos, NO unir.
+Cambio clave:
 Python
-import argparse
-import re
-import shutil
-import unicodedata
-from pathlib import Path
+# Antes agrupabas solo por:
+(asiento_contable, clave_documental)
 
-from core.db import get_cursor
+# Ahora debes agrupar por:
+(asiento_contable, clave_documental, bloque)
+El bloque cambia cuando cambia la clave documental mientras recorres por página.
+2. Endurecer NOTA_INGRESO
+Tu extract_ni() está aceptando demasiado. Debe eliminar esta lógica peligrosa:
+Python
+r"\b(\d{3,10})\b"
+Porque eso hace que páginas débiles o reversos terminen como NI.
+Regla nueva:
+Plain text
+Solo es nota_ingreso si aparece "NOTA DE INGRESO" o "NI:" de forma clara.
+Función recomendada:
+Python
+def is_nota_ingreso_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
 
-BASE_SALIDA = Path("data/salida")
+    return bool(
+        "NOTADEINGRESO" in c
+        or re.search(r"\bNI\s*[:\-]\s*\d{3,10}\b", t, re.I)
+    )
+Y extract_ni():
+Python
+def extract_ni(text: str) -> dict:
+    t = norm(text)
 
+    if not is_nota_ingreso_text(t):
+        return {"numero": None, "clave": None}
 
-def safe_text(value: str | None) -> str:
-    value = value or "SIN_RAZON_SOCIAL"
-    value = unicodedata.normalize("NFKD", value)
-    value = value.encode("ascii", "ignore").decode("ascii")
-    value = re.sub(r"[^A-Za-z0-9]+", "_", value)
-    return value.strip("_").upper() or "SIN_RAZON_SOCIAL"
+    patrones = [
+        r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*(\d{3,10})\b",
+        r"\bNI\s*[:\-]\s*(\d{3,10})\b",
+    ]
 
+    for patron in patrones:
+        m = re.search(patron, t, re.I)
+        if m:
+            numero = m.group(1).zfill(6)
+            return {
+                "numero": numero,
+                "clave": f"NI|{numero}",
+            }
 
-def unique_path(path: Path) -> Path:
-    if not path.exists():
-        return path
+    return {"numero": None, "clave": None}
+3. distribuir_agrupados.py debe usar BD
+Correcto: ya no debe parsear el nombre provisional.
+Debe leer desde:
+SQL
+documentos_agrupados
+Campos base:
+Plain text
+asiento_contable
+clave_documental
+tipo_documental
+nombre_archivo
+ruta_archivo
+Así puedes renombrar bien sin depender de:
+Plain text
+P001-P001
+El nombre final debe salir desde BD, no desde el nombre del archivo.
+4. Flujo final recomendado
+Después de aplicar esos cambios:
+SQL
+UPDATE documentos_paginas
+SET serie = NULL,
+    numero = NULL,
+    ruc_emisor = NULL,
+    razon_social_emisor = NULL,
+    orden_servicio = NULL,
+    orden_compra = NULL,
+    clave_documental = NULL,
+    requiere_qr = FALSE,
+    qr_procesado = FALSE,
+    qr_raw = NULL,
+    qr_error = NULL,
+    estado = 'separado';
 
-    base = path.with_suffix("")
-    ext = path.suffix
-    i = 2
-
-    while True:
-        nuevo = Path(f"{base}_{i}{ext}")
-        if not nuevo.exists():
-            return nuevo
-        i += 1
-
-
-def mover(origen: Path, destino: Path) -> Path:
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    destino = unique_path(destino)
-    shutil.move(str(origen), str(destino))
-    return destino
-
-
-def get_control_por_asiento() -> dict:
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT asiento_contable,
-                   tipo_detectado,
-                   orden_compra,
-                   orden_servicio,
-                   pagina
-            FROM documentos_paginas
-            WHERE estado = 'clasificado'
-              AND clave_documental IS NOT NULL
-              AND tipo_detectado IN ('orden_compra', 'orden_servicio')
-            ORDER BY asiento_contable, pagina
-        """)
-
-        controles = {}
-
-        for row in cur.fetchall():
-            asiento = row["asiento_contable"]
-
-            if asiento in controles:
-                continue
-
-            if row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
-                controles[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
-
-            elif row["tipo_detectado"] == "orden_servicio" and row["orden_servicio"]:
-                controles[asiento] = ("OS", str(row["orden_servicio"]).zfill(6))
-
-        return controles
-
-
-def get_documento_data(clave_documental: str) -> dict:
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM documentos_paginas
-            WHERE clave_documental = %s
-            ORDER BY pagina
-            LIMIT 1
-        """, (clave_documental,))
-        return cur.fetchone()
-
-
-def build_nombre_final(cliente: str, agrupado: dict, control: tuple | None) -> str:
-    row = get_documento_data(agrupado["clave_documental"])
-
-    asiento = agrupado["asiento_contable"]
-    tipo = row["tipo_detectado"]
-
-    prefix = ""
-
-    if control:
-        control_tipo, control_num = control
-        prefix = f"{cliente} {control_tipo} {control_num} - "
-    else:
-        prefix = f"{asiento} {cliente} "
-
-    if tipo == "factura":
-        razon = safe_text(row["razon_social_emisor"])
-        return (
-            f"{prefix}FACTURA {row['serie']} {row['numero']} "
-            f"{row['ruc_emisor']} {razon}.pdf"
-        )
-
-    if tipo == "guia_remision":
-        razon = safe_text(row["razon_social_emisor"])
-        return (
-            f"{prefix}GUIA_REMISION {row['serie']} {row['numero']} "
-            f"{row['ruc_emisor']} {razon}.pdf"
-        )
-
-    if tipo == "nota_ingreso":
-        return f"{prefix}NOTA_INGRESO {row['numero']}.pdf"
-
-    if tipo == "orden_compra":
-        return f"{prefix}ORDEN_COMPRA {row['orden_compra']}.pdf"
-
-    if tipo == "orden_servicio":
-        return f"{prefix}ORDEN_SERVICIO {row['orden_servicio']}.pdf"
-
-    return f"{prefix}SOPORTE.pdf"
-
-
-def procesar(year: int, cliente: str, month: int):
-    base_mes = BASE_SALIDA / str(year) / cliente / f"{month:02d}"
-
-    dir_con_oc = base_mes / "con_oc"
-    dir_sin_oc = base_mes / "sin_oc"
-    dir_revision = base_mes / "revision"
-
-    dir_con_oc.mkdir(parents=True, exist_ok=True)
-    dir_sin_oc.mkdir(parents=True, exist_ok=True)
-    dir_revision.mkdir(parents=True, exist_ok=True)
-
-    controles = get_control_por_asiento()
-
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM documentos_agrupados
-            WHERE estado = 'agrupado'
-            ORDER BY asiento_contable, nombre_archivo
-        """)
-        agrupados = cur.fetchall()
-
-    print(f"Documentos agrupados: {len(agrupados)}")
-    print(f"Asientos con OC/OS: {len(controles)}")
-
-    con_oc = 0
-    sin_oc = 0
-    revision = 0
-
-    for doc in agrupados:
-        origen = Path(doc["ruta_archivo"])
-
-        if not origen.exists():
-            print(f"[NO EXISTE] {origen}")
-            revision += 1
-            continue
-
-        asiento = doc["asiento_contable"]
-        control = controles.get(asiento)
-
-        nuevo_nombre = build_nombre_final(cliente, doc, control)
-
-        if control:
-            destino = mover(origen, dir_con_oc / nuevo_nombre)
-            estado_final = "distribuido_con_oc"
-            con_oc += 1
-            print(f"[CON_OC] {destino.name}")
-        else:
-            destino = mover(origen, dir_sin_oc / nuevo_nombre)
-            estado_final = "distribuido_sin_oc"
-            sin_oc += 1
-            print(f"[SIN_OC] {destino.name}")
-
-        with get_cursor(commit=True) as (_, cur):
-            cur.execute("""
-                UPDATE documentos_agrupados
-                SET nombre_archivo = %s,
-                    ruta_archivo = %s,
-                    estado = %s
-                WHERE id = %s
-            """, (
-                destino.name,
-                str(destino),
-                estado_final,
-                doc["id"],
-            ))
-
-    print("\nDistribución finalizada.")
-    print(f"Con OC/OS: {con_oc}")
-    print(f"Sin OC/OS: {sin_oc}")
-    print(f"Revisión: {revision}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--cliente", required=True)
-    parser.add_argument("--month", type=int, required=True)
-
-    args = parser.parse_args()
-
-    procesar(args.year, args.cliente, args.month)
-Antes de correrlo, limpia salidas finales:
+TRUNCATE documentos_agrupados RESTART IDENTITY CASCADE;
+Archivos:
 Bash
+rm -rf data/salida/2026/BBTEC/01/provisional
 rm -rf data/salida/2026/BBTEC/01/con_oc
 find data/salida/2026/BBTEC/01/sin_oc -type f -name "04-*.pdf" -delete
 Luego:
 Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
 python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
+Mi recomendación: primero corregimos document_enricher.py para NI/OS/OC, luego agrupar_fragmentos.py por bloques consecutivos, y finalmente distribuir_agrupados.py leyendo desde BD.
