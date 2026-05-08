@@ -1,313 +1,59 @@
-
-Sí. Este sería el app/clasificar_paginas.py final, equivalente al agrupador/exportador de páginas ya enriquecidas.
+Sí. En classifier.py, cambia principalmente estas 2 funciones.
+1. Reemplaza _extract_oc_fields
 Python
-
-Ejecución:
-Bash
-
-
-1. Cambios SQL
-Ejecuta esto primero:
-SQL
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS fuente_texto VARCHAR(30);
-
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS pagina_digital BOOLEAN DEFAULT FALSE;
-
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS pagina_ocr BOOLEAN DEFAULT FALSE;
-
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS confianza_ocr NUMERIC(5,2);
-
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS imagen_generada BOOLEAN DEFAULT FALSE;
-
-ALTER TABLE documentos_paginas
-ADD COLUMN IF NOT EXISTS tipo_detectado_basico VARCHAR(50);
-
-ALTER TABLE documentos_paginas
-DROP COLUMN IF EXISTS clave_documental;
-
-ALTER TABLE documentos_paginas
-DROP COLUMN IF EXISTS serie;
-
-ALTER TABLE documentos_paginas
-DROP COLUMN IF EXISTS numero;
-
-ALTER TABLE documentos_paginas
-DROP COLUMN IF EXISTS ruc_emisor;
-2. app/separar_fragmentos.py
-Código final:
-Python
-import argparse
-import re
-from pathlib import Path
-
-import fitz
-
-from core.db import get_cursor
-from core.ocr_runner import run_ocr
-from core.classifier import detect_tipo_documental
-
-
-BASE_TRABAJO = Path("data/trabajo")
-TMP_DIR = Path("storage/tmp/pages")
-
-
-def normalize(txt: str) -> str:
-    txt = txt or ""
-    txt = txt.replace("\x00", "").replace("\u0000", "")
-    return re.sub(r"\s+", " ", txt.upper()).strip()
-
-
-def limpiar_para_postgres(txt: str) -> str:
-    if not txt:
-        return ""
-    return txt.replace("\x00", "").replace("\u0000", "")
-
-
-def extract_asiento(filename: str) -> str:
-    m = re.search(r"^(04-\d{4})", filename)
-    return m.group(1) if m else "SIN_ASIENTO"
-
-
-def extract_text(pdf_path: Path) -> str:
-    text = []
-
-    with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text.append(page.get_text("text"))
-
-    return "\n".join(text)
-
-
-def split_page(source_pdf: Path, page_index: int, output_pdf: Path):
-    output_pdf.parent.mkdir(parents=True, exist_ok=True)
-
-    src = fitz.open(source_pdf)
-    dst = fitz.open()
-
-    dst.insert_pdf(src, from_page=page_index, to_page=page_index)
-    dst.save(output_pdf)
-
-    dst.close()
-    src.close()
-
-
-def is_reverso_page(text: str) -> bool:
-    text = normalize(text)
-
-    if len(text) < 80:
-        return True
-
-    if "USUARIO:" in text and len(text) < 300:
-        return True
-
-    return False
-
-
-def process(year: int, cliente: str, month: int):
-    pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
-
-    pdfs = sorted(pendientes.glob("*.pdf"))
-
-    print(f"Carpeta pendientes: {pendientes}")
-    print(f"PDF pendientes: {len(pdfs)}")
-
-    for pdf in pdfs:
-        asiento = extract_asiento(pdf.name)
-
-        with fitz.open(pdf) as doc:
-            total_pages = doc.page_count
-
-        print(f"\n[PDF] {pdf.name} ({total_pages} páginas)")
-
-        for page_index in range(total_pages):
-            page_pdf = TMP_DIR / f"{pdf.stem}_P{page_index + 1}.pdf"
-            page_ocr = TMP_DIR / f"{pdf.stem}_P{page_index + 1}_OCR.pdf"
-
-            split_page(pdf, page_index, page_pdf)
-
-            texto_pdf = extract_text(page_pdf)
-
-            fuente_texto = "pdf_native"
-            pagina_digital = False
-            pagina_ocr = False
-
-            text = texto_pdf
-
-            if len(normalize(texto_pdf)) > 30:
-                pagina_digital = True
-            else:
-                ok = run_ocr(page_pdf, page_ocr)
-
-                if ok:
-                    text = extract_text(page_ocr)
-                    fuente_texto = "ocr"
-                    pagina_ocr = True
-
-            text_clean = limpiar_para_postgres(text)
-            text_u = normalize(text_clean)
-
-            tipo_basico = detect_tipo_documental(text_u, pdf.name)
-
-            reverso = is_reverso_page(text_u)
-
-            print(
-                f"  Página {page_index + 1}: "
-                f"tipo={tipo_basico} "
-                f"fuente={fuente_texto} "
-                f"digital={pagina_digital} "
-                f"ocr={pagina_ocr} "
-                f"reverso={reverso}"
-            )
-
-            with get_cursor(commit=True) as (_, cur):
-                cur.execute(
-                    """
-                    INSERT INTO documentos_paginas (
-                        asiento_contable,
-                        archivo_fuente,
-                        pagina,
-                        tipo_detectado_basico,
-                        texto_extraido,
-                        fuente_texto,
-                        pagina_digital,
-                        pagina_ocr,
-                        es_reverso,
-                        imagen_generada,
-                        estado
-                    )
-                    VALUES (
-                        %s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,'detectado'
-                    )
-                    ON CONFLICT (archivo_fuente, pagina)
-                    DO UPDATE SET
-                        tipo_detectado_basico = EXCLUDED.tipo_detectado_basico,
-                        texto_extraido = EXCLUDED.texto_extraido,
-                        fuente_texto = EXCLUDED.fuente_texto,
-                        pagina_digital = EXCLUDED.pagina_digital,
-                        pagina_ocr = EXCLUDED.pagina_ocr,
-                        es_reverso = EXCLUDED.es_reverso,
-                        estado = 'detectado'
-                    """,
-                    (
-                        asiento,
-                        pdf.name,
-                        page_index + 1,
-                        tipo_basico,
-                        text_clean[:10000],
-                        fuente_texto,
-                        pagina_digital,
-                        pagina_ocr,
-                        reverso,
-                    ),
-                )
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--cliente", required=True)
-    parser.add_argument("--month", type=int, required=True)
-
-    args = parser.parse_args()
-
-    process(args.year, args.cliente, args.month)
-3. app/document_enricher.py
-Código final:
-Python
-import re
-
-from core.db import get_cursor
-
-
-def normalize(txt: str) -> str:
-    return re.sub(r"\s+", " ", (txt or "").upper()).strip()
-
-
-def extract_factura_data(text):
-    m = re.search(r"\b(F[A-Z0-9]{2,4})[- ]?0*(\d+)\b", text)
-    ruc = re.search(r"\b(10|20)\d{9}\b", text)
-
-    if not m:
-        return None
-
-    return {
-        "serie": m.group(1).upper(),
-        "numero": m.group(2),
-        "ruc": ruc.group(0) if ruc else None,
-    }
-
-
-def enrich_pages():
-    with get_cursor(commit=True) as (_, cur):
-        cur.execute(
-            """
-            SELECT *
-            FROM documentos_paginas
-            WHERE estado = 'detectado'
-            ORDER BY archivo_fuente, pagina
-            """
+def _extract_oc_fields(text_u: str, name_u: str):
+    text_u = normalize_text(text_u)
+    compact = compact_text(text_u)
+
+    # Si es factura, NO convertirla en OC solo porque menciona "Orden de Compra"
+    if "FACTURAELECTRONICA" in compact:
+        return None, None
+
+    tiene_empresa = (
+        "BB TECNOLOGIA INDUSTRIAL" in text_u
+        or "BB TECNOLOGÍA INDUSTRIAL" in text_u
+    )
+
+    tiene_ruc_empresa = "20299922821" in text_u
+
+    # OC real: debe tener título formal + empresa destino + RUC destino
+    if tiene_empresa and tiene_ruc_empresa:
+        m = re.search(
+            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+            text_u,
+            re.I,
         )
+        if m:
+            return None, m.group(1).zfill(6)
 
-        rows = cur.fetchall()
+    return None, None
+2. Cambia el orden en detect_tipo_documental
+Reemplaza esta parte:
+Python
+if "ORDENDESERVICIO" in compact or "ORDENDECOMPRA" in compact:
+    return "orden_compra"
+por esto:
+Python
+if (
+    "ORDENDECOMPRA" in compact
+    and "20299922821" in text_u
+    and (
+        "BB TECNOLOGIA INDUSTRIAL" in text_u
+        or "BB TECNOLOGÍA INDUSTRIAL" in text_u
+    )
+    and re.search(r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*\d{3,8}", text_u, re.I)
+):
+    return "orden_compra"
 
-    for row in rows:
-        text = normalize(row["texto_extraido"])
-
-        clave = None
-        serie = None
-        numero = None
-        ruc = None
-
-        tipo = row["tipo_detectado_basico"]
-
-        if tipo == "factura":
-            data = extract_factura_data(text)
-
-            if data:
-                serie = data["serie"]
-                numero = data["numero"]
-                ruc = data["ruc"]
-
-                clave = f"FACTURA|{ruc}|{serie}|{numero}"
-
-        elif tipo == "guia_remision":
-            pass
-
-        elif tipo == "orden_servicio":
-            pass
-
-        elif tipo == "orden_compra":
-            pass
-
-        elif tipo == "nota_ingreso":
-            pass
-
-        with get_cursor(commit=True) as (_, cur):
-            cur.execute(
-                """
-                UPDATE documentos_paginas
-                SET
-                    clave_documental = %s
-                WHERE id = %s
-                """,
-                (
-                    clave,
-                    row["id"],
-                ),
-            )
-
-
-if __name__ == "__main__":
-    enrich_pages()
-4. Ejecución correcta
-Bash
-
-
-
-Ahora sí el OCR se hace solo una vez por página.
+if "ORDENDESERVICIO" in compact:
+    return "orden_servicio"
+Importante
+Con esto, una factura que diga:
+Plain text
+Orden de Compra : 000228
+seguirá siendo factura.
+Solo será orden_compra si tiene:
+Plain text
+Orden de Compra N*:002912
+BB TECNOLOGIA INDUSTRIAL S.A.C.
+20299922821
