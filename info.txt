@@ -1,178 +1,26 @@
-Sí. Reemplaza todo app/agrupar_fragmentos.py por este código:
-Python
-import argparse
-from pathlib import Path
-import fitz
+$ python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+Traceback (most recent call last):
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 170, in <module>
+    procesar(args.year, args.cliente, args.month)
+  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 136, in procesar
+    cur.execute("""
+  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\.venv\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.UndefinedColumn: column "nombre_archivo" of relation "documentos_agrupados" does not exist
+LINE 6:                         nombre_archivo,
+                                ^
 
-from core.db import get_cursor
+(.venv) 
+ver el codigo fuente: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/agrupar_fragmentos.py
 
-BASE_SALIDA = Path("data/salida")
-
-
-def parse_clave(clave: str) -> dict:
-    parts = clave.split("|")
-
-    if parts[0] == "FACTURA":
-        return {
-            "tipo": "FACTURA",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-        }
-
-    if parts[0] == "GUIA":
-        return {
-            "tipo": "GUIA_REMISION",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-        }
-
-    if parts[0] == "OC":
-        return {
-            "tipo": "OC",
-            "numero": parts[1],
-        }
-
-    if parts[0] == "OS":
-        return {
-            "tipo": "OS",
-            "numero": parts[1],
-        }
-
-    if parts[0] == "NI":
-        return {
-            "tipo": "NOTA_INGRESO",
-            "numero": parts[1],
-        }
-
-    return {
-        "tipo": "OTRO",
-    }
-
-
-def build_filename(asiento: str, clave: str, paginas: list[int]) -> str:
-    data = parse_clave(clave)
-
-    p_ini = min(paginas)
-    p_fin = max(paginas)
-    rango = f"P{p_ini:03d}-P{p_fin:03d}"
-
-    tipo = data["tipo"]
-
-    if tipo in ("FACTURA", "GUIA_REMISION"):
-        return (
-            f"{asiento} {tipo} {data['serie']} {data['numero']} "
-            f"{data['ruc']} {rango}.pdf"
-        )
-
-    if tipo in ("OC", "OS", "NOTA_INGRESO"):
-        return f"{asiento} {tipo} {data['numero']} {rango}.pdf"
-
-    return f"{asiento} OTRO {rango}.pdf"
-
-
-def crear_pdf(paginas: list[dict], output_pdf: Path):
-    output_pdf.parent.mkdir(parents=True, exist_ok=True)
-
-    doc_out = fitz.open()
-
-    for row in paginas:
-        ruta = row["ruta_pagina_pdf"]
-
-        if not ruta:
-            print(f"[SIN RUTA] ID {row['id']} {row['archivo_fuente']} P{row['pagina']}")
-            continue
-
-        page_pdf = Path(ruta)
-
-        if not page_pdf.exists():
-            print(f"[NO EXISTE] {page_pdf}")
-            continue
-
-        with fitz.open(page_pdf) as doc_in:
-            doc_out.insert_pdf(doc_in)
-
-    if doc_out.page_count > 0:
-        doc_out.save(output_pdf)
-
-    doc_out.close()
-
-
-def procesar(year: int, cliente: str, month: int):
-    salida = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "provisional"
-    salida.mkdir(parents=True, exist_ok=True)
-
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM documentos_paginas
-            WHERE estado = 'clasificado'
-              AND clave_documental IS NOT NULL
-            ORDER BY asiento_contable, clave_documental, pagina
-        """)
-        rows = cur.fetchall()
-
-    grupos = {}
-
-    for row in rows:
-        key = (
-            row["asiento_contable"],
-            row["clave_documental"],
-        )
-        grupos.setdefault(key, []).append(row)
-
-    total = 0
-
-    for (asiento, clave), paginas in grupos.items():
-        paginas_ordenadas = sorted(paginas, key=lambda x: x["pagina"])
-        nums_paginas = [p["pagina"] for p in paginas_ordenadas]
-
-        filename = build_filename(asiento, clave, nums_paginas)
-        output_pdf = salida / filename
-
-        crear_pdf(paginas_ordenadas, output_pdf)
-
-        if output_pdf.exists():
-            with get_cursor(commit=True) as (_, cur):
-                cur.execute("""
-                    INSERT INTO documentos_agrupados (
-                        asiento_contable,
-                        clave_documental,
-                        tipo_documental,
-                        nombre_archivo,
-                        ruta_archivo,
-                        paginas,
-                        estado
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,'agrupado')
-                """, (
-                    asiento,
-                    clave,
-                    parse_clave(clave)["tipo"],
-                    filename,
-                    str(output_pdf),
-                    ",".join(str(p) for p in nums_paginas),
-                ))
-
-            total += 1
-            print(f"[AGRUPADO] {filename}")
-
-    print(f"Total agrupados: {total}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--cliente", required=True)
-    parser.add_argument("--month", type=int, required=True)
-
-    args = parser.parse_args()
-
-    procesar(args.year, args.cliente, args.month)
-Luego ejecuta:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-Después recién:
-Bash
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
+numpy==2.1.1
+opencv-python==4.10.0.84
+pdf2image==1.17.0
+pillow==10.4.0
+psycopg2-binary==2.9.10
+PyMuPDF==1.27.2.3
+pypdf==5.4.0
+python-dotenv==1.0.1
+python-slugify==8.0.4
+text-unidecode==1.3

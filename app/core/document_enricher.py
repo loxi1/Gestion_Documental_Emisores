@@ -64,11 +64,21 @@ def is_orden_compra_text(text: str) -> bool:
     t = norm(text)
     c = compact_text(t)
 
-    return bool(
-        "ORDENDECOMPRA" in c
-        or re.search(r"ORDEN\s+DE\s+COMPRA", t, re.I)
-        or re.search(r"\bO[./-]?C\.?\s*(N[°º*]?)?\s*[:\-]?\s*\d{3,8}\b", t, re.I)
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
+        return False
+
+    tiene_titulo_oc = bool(
+        re.search(
+            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*\d{3,8}",
+            t,
+            re.I,
+        )
     )
+
+    tiene_empresa = "BB TECNOLOGIA INDUSTRIAL" in t
+    tiene_ruc_empresa = "20299922821" in t
+
+    return tiene_titulo_oc and tiene_empresa and tiene_ruc_empresa
 
 
 def is_nota_ingreso_text(text: str) -> bool:
@@ -106,8 +116,9 @@ def is_pago_text(text: str) -> bool:
     )
 
 
-def detect_tipo(text: str, archivo_fuente: str = "") -> str:
+def detect_tipo (text: str, archivo_fuente: str = "") -> str:
     t = norm(text)
+    c = compact_text(t)
 
     if is_proforma_text(t, archivo_fuente):
         return "proforma"
@@ -115,8 +126,7 @@ def detect_tipo(text: str, archivo_fuente: str = "") -> str:
     if is_nota_ingreso_text(t):
         return "nota_ingreso"
 
-    # NUEVO: factura primero
-    if "FACTURA ELECTRONICA" in t or "FACTURA ELECTRÓNICA" in t or re.search(r"\b[A-Z]\d{3,4}\s*[-]\s*\d+\b", t):
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
         return "factura"
 
     if is_guia_text(t, archivo_fuente):
@@ -127,9 +137,6 @@ def detect_tipo(text: str, archivo_fuente: str = "") -> str:
 
     if is_orden_compra_text(t):
         return "orden_compra"
-
-    if "FACTURA" in t:
-        return "factura"
 
     if is_pago_text(t):
         return "pago"
@@ -297,22 +304,21 @@ def extract_oc(text: str) -> dict:
     if not is_orden_compra_text(t):
         return {"numero": None, "clave": None}
 
-    patrones = [
-        r"ORDEN\s+DE\s+COMPRA\s*(?:N[°º*?])?\s*:?\s*(\d{3,8})\b",
-        r"\bO[./-]?C\.?\s*(?:N[°º*?])?\s*:?\s*(\d{3,8})\b",
-        r"OBSERVACIONES\s*:?.*?ORDEN\s+DE\s+COMPRA\s*N[°º*?]?\s*(\d{3,8})\b",
-    ]
+    m = re.search(
+        r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+        t,
+        re.I,
+    )
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I | re.S)
-        if m:
-            numero = m.group(1).zfill(6)
-            return {
-                "numero": numero,
-                "clave": f"OC|{numero}",
-            }
+    if not m:
+        return {"numero": None, "clave": None}
 
-    return {"numero": None, "clave": None}
+    numero = m.group(1).zfill(6)
+
+    return {
+        "numero": numero,
+        "clave": f"OC|{numero}",
+    }
 
 
 def extract_ni(text: str) -> dict:
