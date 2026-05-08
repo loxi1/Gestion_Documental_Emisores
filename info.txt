@@ -1,26 +1,36 @@
-$ python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-Traceback (most recent call last):
-  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 170, in <module>
-    procesar(args.year, args.cliente, args.month)
-  File "C:\d\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 136, in procesar
-    cur.execute("""
-  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\.venv\Lib\site-packages\psycopg2\extras.py", line 236, in execute
-    return super().execute(query, vars)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-psycopg2.errors.UndefinedColumn: column "nombre_archivo" of relation "documentos_agrupados" does not exist
-LINE 6:                         nombre_archivo,
-                                ^
-
-(.venv) 
-ver el codigo fuente: https://raw.githubusercontent.com/loxi1/Gestion_Documental_Emisores/refs/heads/main/app/agrupar_fragmentos.py
-
-numpy==2.1.1
-opencv-python==4.10.0.84
-pdf2image==1.17.0
-pillow==10.4.0
-psycopg2-binary==2.9.10
-PyMuPDF==1.27.2.3
-pypdf==5.4.0
-python-dotenv==1.0.1
-python-slugify==8.0.4
-text-unidecode==1.3
+Sí, hay 2 problemas:
+En GitHub, app/agrupar_fragmentos.py está con código de distribuir/renombrar, no de agrupar. �
+GitHub
+Tu tabla documentos_agrupados no tiene la columna nombre_archivo.
+1. Arregla la tabla
+Ejecuta:
+SQL
+ALTER TABLE documentos_agrupados
+ADD COLUMN IF NOT EXISTS asiento_contable VARCHAR(20),
+ADD COLUMN IF NOT EXISTS clave_documental TEXT,
+ADD COLUMN IF NOT EXISTS tipo_documental VARCHAR(50),
+ADD COLUMN IF NOT EXISTS nombre_archivo TEXT,
+ADD COLUMN IF NOT EXISTS ruta_archivo TEXT,
+ADD COLUMN IF NOT EXISTS paginas TEXT,
+ADD COLUMN IF NOT EXISTS estado VARCHAR(50) DEFAULT 'agrupado',
+ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT now();
+Luego:
+SQL
+TRUNCATE documentos_agrupados RESTART IDENTITY CASCADE;
+2. Corrige archivos
+Tu repo está cruzado:
+Plain text
+agrupar_fragmentos.py     → debe crear PDFs en provisional/
+distribuir_agrupados.py   → debe mover/renombrar a con_oc / sin_oc
+Ahora mismo agrupar_fragmentos.py tiene lógica de distribución.
+3. Ejecuta de nuevo
+Bash
+rm -rf data/salida/2026/BBTEC/01/provisional
+Luego:
+Bash
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
+Si quieres validar columnas antes:
+SQL
+\d documentos_agrupados
+El error puntual se corrige agregando nombre_archivo, pero te conviene agregar todas esas columnas para que el agrupador guarde trazabilidad completa.
