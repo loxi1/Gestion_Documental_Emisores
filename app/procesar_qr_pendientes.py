@@ -55,7 +55,8 @@ def procesar(year: int, cliente: str, month: int):
                 cur.execute("""
                     UPDATE documentos_paginas
                     SET qr_procesado = TRUE,
-                        qr_error = 'Sin ruta_pagina_pdf'
+                        qr_error = 'Sin ruta_pagina_pdf',
+                        estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (row["id"],))
             print(f"[SIN RUTA] {row['archivo_fuente']} P{row['pagina']}")
@@ -68,7 +69,8 @@ def procesar(year: int, cliente: str, month: int):
                 cur.execute("""
                     UPDATE documentos_paginas
                     SET qr_procesado = TRUE,
-                        qr_error = %s
+                        qr_error = %s,
+                        estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (f"No existe archivo: {pdf_path}", row["id"]))
             print(f"[NO EXISTE] {pdf_path}")
@@ -83,7 +85,8 @@ def procesar(year: int, cliente: str, month: int):
                 cur.execute("""
                     UPDATE documentos_paginas
                     SET qr_procesado = TRUE,
-                        qr_error = 'QR no detectado'
+                        qr_error = 'QR no detectado',
+                        estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (row["id"],))
             print("  QR no detectado")
@@ -140,7 +143,8 @@ def procesar(year: int, cliente: str, month: int):
                 cur.execute("""
                     UPDATE documentos_paginas
                     SET qr_procesado = TRUE,
-                        qr_error = 'QR detectado pero no parseable/usable'
+                        qr_error = 'QR detectado pero no parseable/usable',
+                        estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (row["id"],))
             print("  QR no usable")

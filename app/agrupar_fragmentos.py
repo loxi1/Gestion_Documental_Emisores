@@ -111,14 +111,13 @@ def process(year: int, cliente: str, month: int):
     )
 
     with get_cursor() as (_, cur):
-        cur.execute(
-            """
+        cur.execute("""
             SELECT *
             FROM documentos_paginas
-            WHERE estado = 'detectado'
+            WHERE estado = 'clasificado'
+            AND clave_documental IS NOT NULL
             ORDER BY archivo_fuente, pagina
-            """
-        )
+        """)
         rows = cur.fetchall()
 
     por_archivo = {}
