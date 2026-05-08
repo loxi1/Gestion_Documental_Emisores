@@ -1,36 +1,14 @@
-Sí, hay 2 problemas:
-En GitHub, app/agrupar_fragmentos.py está con código de distribuir/renombrar, no de agrupar. �
-GitHub
-Tu tabla documentos_agrupados no tiene la columna nombre_archivo.
-1. Arregla la tabla
-Ejecuta:
-SQL
-ALTER TABLE documentos_agrupados
-ADD COLUMN IF NOT EXISTS asiento_contable VARCHAR(20),
-ADD COLUMN IF NOT EXISTS clave_documental TEXT,
-ADD COLUMN IF NOT EXISTS tipo_documental VARCHAR(50),
-ADD COLUMN IF NOT EXISTS nombre_archivo TEXT,
-ADD COLUMN IF NOT EXISTS ruta_archivo TEXT,
-ADD COLUMN IF NOT EXISTS paginas TEXT,
-ADD COLUMN IF NOT EXISTS estado VARCHAR(50) DEFAULT 'agrupado',
-ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT now();
-Luego:
-SQL
-TRUNCATE documentos_agrupados RESTART IDENTITY CASCADE;
-2. Corrige archivos
-Tu repo está cruzado:
-Plain text
-agrupar_fragmentos.py     → debe crear PDFs en provisional/
-distribuir_agrupados.py   → debe mover/renombrar a con_oc / sin_oc
-Ahora mismo agrupar_fragmentos.py tiene lógica de distribución.
-3. Ejecuta de nuevo
-Bash
-rm -rf data/salida/2026/BBTEC/01/provisional
-Luego:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
-Si quieres validar columnas antes:
-SQL
-\d documentos_agrupados
-El error puntual se corrige agregando nombre_archivo, pero te conviene agregar todas esas columnas para que el agrupador guarde trazabilidad completa.
+Creo que debes tener un helper de esto porque lo usas en varios archivos:
+gestiondocumental_mvp=# select nombre_oficial, abreviatura, ruc from clientes_destino;
+          nombre_oficial          | abreviatura |     ruc
+----------------------------------+-------------+-------------
+ BB TECNOLOGIA INDUSTRIAL S.A.C.  | BBTEC       | 20299922821
+ BBTI S.A.C.                      | BBTI        | 20565747356
+ CONSORCIO CIMA ENERGY            | CIMA        | 20613521004
+ CONSORCIO ILUMINACION TARMA 2025 | TARMA       | 20614307197
+ CONSORCIO HUANCAVELICA           | HUANCA      | 20612122416
+ Consorcio Kimbiri                | KIMBIRI     | 20609856140
+(6 rows)
+
+
+gestiondocumental_mvp=#
