@@ -1,30 +1,5 @@
-Sí, se puede mejorar y sí conviene hacerlo ahora.
-1. Corregir agrupamiento de facturas repetidas
-Problema actual:
-Plain text
-04-0059 FACTURA ... P001-P004
-No debe unir páginas separadas si entre medio hay OC/guía/NI.
-Regla nueva en agrupar_fragmentos.py:
-Plain text
-Agrupar por bloques consecutivos.
-Si la misma clave aparece en P1 y P4, pero P2/P3 son otros documentos, NO unir.
-Cambio clave:
-Python
-# Antes agrupabas solo por:
-(asiento_contable, clave_documental)
-
-# Ahora debes agrupar por:
-(asiento_contable, clave_documental, bloque)
-El bloque cambia cuando cambia la clave documental mientras recorres por página.
-2. Endurecer NOTA_INGRESO
-Tu extract_ni() está aceptando demasiado. Debe eliminar esta lógica peligrosa:
-Python
-r"\b(\d{3,10})\b"
-Porque eso hace que páginas débiles o reversos terminen como NI.
-Regla nueva:
-Plain text
-Solo es nota_ingreso si aparece "NOTA DE INGRESO" o "NI:" de forma clara.
-Función recomendada:
+Perfecto. Entonces endurecemos NI con esa regla exacta.
+Reemplaza en document_enricher.py:
 Python
 def is_nota_ingreso_text(text: str) -> bool:
     t = norm(text)
@@ -32,9 +7,9 @@ def is_nota_ingreso_text(text: str) -> bool:
 
     return bool(
         "NOTADEINGRESO" in c
-        or re.search(r"\bNI\s*[:\-]\s*\d{3,10}\b", t, re.I)
+        and re.search(r"NOTA\s+DE\s+INGRESO\s+0*\d{3,10}", t, re.I | re.S)
     )
-Y extract_ni():
+Y reemplaza extract_ni() por:
 Python
 def extract_ni(text: str) -> dict:
     t = norm(text)
@@ -42,64 +17,23 @@ def extract_ni(text: str) -> dict:
     if not is_nota_ingreso_text(t):
         return {"numero": None, "clave": None}
 
-    patrones = [
-        r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*(\d{3,10})\b",
-        r"\bNI\s*[:\-]\s*(\d{3,10})\b",
-    ]
+    m = re.search(
+        r"NOTA\s+DE\s+INGRESO\s+0*(\d{3,10})",
+        t,
+        re.I | re.S
+    )
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I)
-        if m:
-            numero = m.group(1).zfill(6)
-            return {
-                "numero": numero,
-                "clave": f"NI|{numero}",
-            }
+    if not m:
+        return {"numero": None, "clave": None}
 
-    return {"numero": None, "clave": None}
-3. distribuir_agrupados.py debe usar BD
-Correcto: ya no debe parsear el nombre provisional.
-Debe leer desde:
-SQL
-documentos_agrupados
-Campos base:
+    numero = m.group(1).zfill(10)
+
+    return {
+        "numero": numero,
+        "clave": f"NI|{numero}",
+    }
+Así solo detectará NI si realmente aparece:
 Plain text
-asiento_contable
-clave_documental
-tipo_documental
-nombre_archivo
-ruta_archivo
-Así puedes renombrar bien sin depender de:
-Plain text
-P001-P001
-El nombre final debe salir desde BD, no desde el nombre del archivo.
-4. Flujo final recomendado
-Después de aplicar esos cambios:
-SQL
-UPDATE documentos_paginas
-SET serie = NULL,
-    numero = NULL,
-    ruc_emisor = NULL,
-    razon_social_emisor = NULL,
-    orden_servicio = NULL,
-    orden_compra = NULL,
-    clave_documental = NULL,
-    requiere_qr = FALSE,
-    qr_procesado = FALSE,
-    qr_raw = NULL,
-    qr_error = NULL,
-    estado = 'separado';
-
-TRUNCATE documentos_agrupados RESTART IDENTITY CASCADE;
-Archivos:
-Bash
-rm -rf data/salida/2026/BBTEC/01/provisional
-rm -rf data/salida/2026/BBTEC/01/con_oc
-find data/salida/2026/BBTEC/01/sin_oc -type f -name "04-*.pdf" -delete
-Luego:
-Bash
-python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
-Mi recomendación: primero corregimos document_enricher.py para NI/OS/OC, luego agrupar_fragmentos.py por bloques consecutivos, y finalmente distribuir_agrupados.py leyendo desde BD.
+NOTA DE INGRESO
+0000003053
+y ya no tomará reversos o páginas débiles como NI|002026.
