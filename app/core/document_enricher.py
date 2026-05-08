@@ -124,9 +124,8 @@ def is_nota_ingreso_text(text: str) -> bool:
 
     return bool(
         "NOTADEINGRESO" in c
-        or re.search(r"NOTA\s+DE\s+INGRESO", t, re.I)
+        and re.search(r"NOTA\s+DE\s+INGRESO\s+0*\d{3,10}", t, re.I | re.S)
     )
-
 
 def is_proforma_text(text: str, filename: str = "") -> bool:
     t = norm(text)
@@ -363,22 +362,21 @@ def extract_ni(text: str) -> dict:
     if not is_nota_ingreso_text(t):
         return {"numero": None, "clave": None}
 
-    patrones = [
-        r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*(\d{3,10})\b",
-        r"\bNI\s*:?\s*(\d{3,10})\b",
-        r"\b(\d{3,10})\b",
-    ]
+    m = re.search(
+        r"NOTA\s+DE\s+INGRESO\s+0*(\d{3,10})",
+        t,
+        re.I | re.S
+    )
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I)
-        if m:
-            numero = m.group(1).zfill(6)
-            return {
-                "numero": numero,
-                "clave": f"NI|{numero}",
-            }
+    if not m:
+        return {"numero": None, "clave": None}
 
-    return {"numero": None, "clave": None}
+    numero = m.group(1).zfill(10)
+
+    return {
+        "numero": numero,
+        "clave": f"NI|{numero}",
+    }
 
 
 # ---------------------------------------------------------
