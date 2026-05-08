@@ -115,16 +115,20 @@ def detect_tipo(text: str, archivo_fuente: str = "") -> str:
     if is_nota_ingreso_text(t):
         return "nota_ingreso"
 
+    # NUEVO: factura primero
+    if "FACTURA ELECTRONICA" in t or "FACTURA ELECTRÓNICA" in t or re.search(r"\b[A-Z]\d{3,4}\s*[-]\s*\d+\b", t):
+        return "factura"
+
+    if is_guia_text(t, archivo_fuente):
+        return "guia_remision"
+
     if is_orden_servicio_text(t):
         return "orden_servicio"
 
     if is_orden_compra_text(t):
         return "orden_compra"
 
-    if is_guia_text(t, archivo_fuente):
-        return "guia_remision"
-
-    if "FACTURA" in t or "FACTURA ELECTRONICA" in t:
+    if "FACTURA" in t:
         return "factura"
 
     if is_pago_text(t):

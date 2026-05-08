@@ -1,196 +1,246 @@
 import argparse
+import re
+import shutil
+import unicodedata
 from pathlib import Path
-
-import fitz
 
 from core.db import get_cursor
 
-
-BASE_TRABAJO = Path("data/trabajo")
 BASE_SALIDA = Path("data/salida")
 
 
-def same_group(a, b) -> bool:
-    if a["archivo_fuente"] != b["archivo_fuente"]:
-        return False
-
-    if b["es_reverso"]:
-        return True
-
-    if a["tipo_detectado"] != b["tipo_detectado"]:
-        return False
-
-    if not a["clave_documental"] or not b["clave_documental"]:
-        return False
-
-    return a["clave_documental"] == b["clave_documental"]
+def safe_text(value: str | None) -> str:
+    value = value or ""
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^A-Za-z0-9]+", "_", value)
+    return value.strip("_").upper() or "SIN_RAZON_SOCIAL"
 
 
-def build_nombre(grupo):
-    first = grupo[0]
-    last = grupo[-1]
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
 
-    asiento = first["asiento_contable"]
-    tipo = first["tipo_detectado"].upper()
-    page_start = first["pagina"]
-    page_end = last["pagina"]
+    base = path.with_suffix("")
+    ext = path.suffix
+    i = 2
 
-    clave = first["clave_documental"] or ""
-
-    if clave.startswith("OS|"):
-        numero = clave.split("|")[1]
-        return f"{asiento} OS {numero} P{page_start:03d}-P{page_end:03d}.pdf"
-
-    if clave.startswith("OC|"):
-        numero = clave.split("|")[1]
-        return f"{asiento} OC {numero} P{page_start:03d}-P{page_end:03d}.pdf"
-
-    if clave.startswith("FACTURA|"):
-        _, ruc, serie, numero = clave.split("|")
-        return f"{asiento} FACTURA {serie} {numero} {ruc} P{page_start:03d}-P{page_end:03d}.pdf"
-
-    if clave.startswith("GUIA|"):
-        _, ruc, serie, numero = clave.split("|")
-        return f"{asiento} GUIA_REMISION {serie} {numero} {ruc} P{page_start:03d}-P{page_end:03d}.pdf"
-
-    if clave.startswith("NI|"):
-        numero = clave.split("|")[1]
-        return f"{asiento} NOTA_INGRESO {numero} P{page_start:03d}-P{page_end:03d}.pdf"
-
-    return f"{asiento} {tipo} P{page_start:03d}-P{page_end:03d}.pdf"
+    while True:
+        nuevo = Path(f"{base}_{i}{ext}")
+        if not nuevo.exists():
+            return nuevo
+        i += 1
 
 
-def export_group(pdf_path: Path, pages: list[int], output_pdf: Path):
-    output_pdf.parent.mkdir(parents=True, exist_ok=True)
-
-    src = fitz.open(pdf_path)
-    dst = fitz.open()
-
-    for page_number in pages:
-        dst.insert_pdf(src, from_page=page_number - 1, to_page=page_number - 1)
-
-    dst.save(output_pdf)
-
-    dst.close()
-    src.close()
+def mover(origen: Path, destino: Path):
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino = unique_path(destino)
+    shutil.move(str(origen), str(destino))
+    return destino
 
 
-def make_groups(rows):
-    grupos = []
-
-    actual = []
-
-    for row in rows:
-        if not actual:
-            actual.append(row)
-            continue
-
-        prev = actual[-1]
-
-        if row["pagina"] == prev["pagina"] + 1 and same_group(prev, row):
-            actual.append(row)
-        else:
-            grupos.append(actual)
-            actual = [row]
-
-    if actual:
-        grupos.append(actual)
-
-    return grupos
+def extraer_asiento(nombre: str) -> str | None:
+    m = re.match(r"^(04-\d{4})\s+", nombre)
+    return m.group(1) if m else None
 
 
-def process(year: int, cliente: str, month: int):
-    pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
-
-    provisional = (
-        BASE_SALIDA
-        / str(year)
-        / cliente
-        / f"{month:02d}"
-        / "provisional"
-    )
-
+def obtener_control_por_asiento():
     with get_cursor() as (_, cur):
         cur.execute("""
-            SELECT *
+            SELECT asiento_contable,
+                   tipo_detectado,
+                   orden_compra,
+                   orden_servicio,
+                   pagina
             FROM documentos_paginas
             WHERE estado = 'clasificado'
-            AND clave_documental IS NOT NULL
-            ORDER BY archivo_fuente, pagina
+              AND clave_documental IS NOT NULL
+              AND tipo_detectado IN ('orden_compra', 'orden_servicio')
+            ORDER BY asiento_contable, pagina
         """)
-        rows = cur.fetchall()
 
-    por_archivo = {}
+        data = {}
 
-    for row in rows:
-        por_archivo.setdefault(row["archivo_fuente"], []).append(row)
+        for row in cur.fetchall():
+            asiento = row["asiento_contable"]
 
-    total = 0
+            if asiento in data:
+                continue
 
-    for archivo_fuente, items in por_archivo.items():
-        pdf_path = pendientes / archivo_fuente
+            if row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
+                data[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
 
-        if not pdf_path.exists():
-            print(f"[WARN] No existe PDF fuente: {pdf_path}")
+            elif row["tipo_detectado"] == "orden_servicio" and row["orden_servicio"]:
+                data[asiento] = ("OS", str(row["orden_servicio"]).zfill(6))
+
+        return data
+
+
+def obtener_razones():
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT DISTINCT ruc_emisor, razon_social_emisor
+            FROM documentos_paginas
+            WHERE ruc_emisor IS NOT NULL
+              AND razon_social_emisor IS NOT NULL
+              AND razon_social_emisor <> ''
+        """)
+
+        return {
+            row["ruc_emisor"]: row["razon_social_emisor"]
+            for row in cur.fetchall()
+        }
+
+
+def parse_nombre(nombre: str) -> dict:
+    stem = Path(nombre).stem
+
+    partes = stem.split()
+    asiento = partes[0]
+
+    if "FACTURA" in partes:
+        i = partes.index("FACTURA")
+        return {
+            "asiento": asiento,
+            "tipo": "FACTURA",
+            "serie": partes[i + 1],
+            "numero": partes[i + 2],
+            "ruc": partes[i + 3],
+        }
+
+    if "GUIA_REMISION" in partes:
+        i = partes.index("GUIA_REMISION")
+        return {
+            "asiento": asiento,
+            "tipo": "GUIA_REMISION",
+            "serie": partes[i + 1],
+            "numero": partes[i + 2],
+            "ruc": partes[i + 3],
+        }
+
+    if "NOTA_INGRESO" in partes:
+        i = partes.index("NOTA_INGRESO")
+        return {
+            "asiento": asiento,
+            "tipo": "NOTA_INGRESO",
+            "numero": partes[i + 1],
+        }
+
+    if "OC" in partes:
+        i = partes.index("OC")
+        return {
+            "asiento": asiento,
+            "tipo": "ORDEN_COMPRA",
+            "numero": partes[i + 1],
+        }
+
+    if "OS" in partes:
+        i = partes.index("OS")
+        return {
+            "asiento": asiento,
+            "tipo": "ORDEN_SERVICIO",
+            "numero": partes[i + 1],
+        }
+
+    return {
+        "asiento": asiento,
+        "tipo": "OTRO",
+    }
+
+
+def nombre_final_con_oc(cliente: str, control_tipo: str, control_num: str, data: dict, razones: dict) -> str:
+    prefix = f"{cliente} {control_tipo} {control_num} -"
+
+    tipo = data["tipo"]
+
+    if tipo == "ORDEN_COMPRA":
+        return f"{prefix} ORDEN_COMPRA {data['numero']}.pdf"
+
+    if tipo == "ORDEN_SERVICIO":
+        return f"{prefix} ORDEN_SERVICIO {data['numero']}.pdf"
+
+    if tipo == "FACTURA":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{prefix} FACTURA {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if tipo == "GUIA_REMISION":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{prefix} GUIA_REMISION {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if tipo == "NOTA_INGRESO":
+        return f"{prefix} NOTA_INGRESO {data['numero']}.pdf"
+
+    return f"{prefix} SOPORTE.pdf"
+
+
+def nombre_final_sin_oc(cliente: str, data: dict, razones: dict) -> str:
+    asiento = data["asiento"]
+    tipo = data["tipo"]
+
+    if tipo == "FACTURA":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{asiento} {cliente} FACTURA {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if tipo == "GUIA_REMISION":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{asiento} {cliente} GUIA_REMISION {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if tipo == "NOTA_INGRESO":
+        return f"{asiento} {cliente} NOTA_INGRESO {data['numero']}.pdf"
+
+    return f"{asiento} {cliente} SOPORTE.pdf"
+
+
+def procesar(year: int, cliente: str, month: int):
+    base_mes = BASE_SALIDA / str(year) / cliente / f"{month:02d}"
+    provisional = base_mes / "provisional"
+
+    dir_con_oc = base_mes / "con_oc"
+    dir_sin_oc = base_mes / "sin_oc"
+    dir_revision = base_mes / "revision"
+
+    dir_con_oc.mkdir(parents=True, exist_ok=True)
+    dir_sin_oc.mkdir(parents=True, exist_ok=True)
+    dir_revision.mkdir(parents=True, exist_ok=True)
+
+    controles = obtener_control_por_asiento()
+    razones = obtener_razones()
+
+    archivos = sorted(provisional.glob("*.pdf"))
+
+    print(f"Provisional: {provisional}")
+    print(f"Archivos encontrados: {len(archivos)}")
+    print(f"Asientos con OC/OS: {len(controles)}")
+
+    con_oc = sin_oc = revision = 0
+
+    for archivo in archivos:
+        data = parse_nombre(archivo.name)
+        asiento = data.get("asiento")
+
+        if not asiento:
+            destino = mover(archivo, dir_revision / archivo.name)
+            revision += 1
+            print(f"[REVISION] {destino.name}")
             continue
 
-        grupos = make_groups(items)
+        if asiento in controles:
+            control_tipo, control_num = controles[asiento]
+            nuevo_nombre = nombre_final_con_oc(cliente, control_tipo, control_num, data, razones)
+            destino = mover(archivo, dir_con_oc / nuevo_nombre)
+            con_oc += 1
+            print(f"[CON_OC] {destino.name}")
 
-        for grupo in grupos:
-            pages = [x["pagina"] for x in grupo]
-            nombre = build_nombre(grupo)
-            output_pdf = provisional / nombre
+        else:
+            nuevo_nombre = nombre_final_sin_oc(cliente, data, razones)
+            destino = mover(archivo, dir_sin_oc / nuevo_nombre)
+            sin_oc += 1
+            print(f"[SIN_OC] {destino.name}")
 
-            export_group(pdf_path, pages, output_pdf)
-
-            first = grupo[0]
-            last = grupo[-1]
-
-            with get_cursor(commit=True) as (_, cur):
-                cur.execute(
-                    """
-                    INSERT INTO documentos_agrupados (
-                        asiento_contable,
-                        archivo_fuente,
-                        tipo_documental,
-                        clave_documental,
-                        serie,
-                        numero,
-                        orden_servicio,
-                        orden_compra,
-                        pagina_inicio,
-                        pagina_fin,
-                        paginas,
-                        nombre_provisional,
-                        ruta_provisional
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        first["asiento_contable"],
-                        archivo_fuente,
-                        first["tipo_detectado"],
-                        first["clave_documental"],
-                        first.get("serie"),
-                        first.get("numero"),
-                        first["clave_documental"].split("|")[1]
-                        if first["clave_documental"] and first["clave_documental"].startswith("OS|")
-                        else None,
-                        first["clave_documental"].split("|")[1]
-                        if first["clave_documental"] and first["clave_documental"].startswith("OC|")
-                        else None,
-                        first["pagina"],
-                        last["pagina"],
-                        ",".join(map(str, pages)),
-                        nombre,
-                        str(output_pdf),
-                    ),
-                )
-
-            total += 1
-            print(f"[AGRUPADO] {nombre}")
-
-    print(f"Total agrupados: {total}")
+    print("\nDistribución finalizada.")
+    print(f"Con OC/OS: {con_oc}")
+    print(f"Sin OC/OS: {sin_oc}")
+    print(f"Revisión: {revision}")
 
 
 if __name__ == "__main__":
@@ -198,6 +248,6 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
-    args = parser.parse_args()
 
-    process(args.year, args.cliente, args.month)
+    args = parser.parse_args()
+    procesar(args.year, args.cliente, args.month)

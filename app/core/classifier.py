@@ -56,8 +56,19 @@ def detect_tipo_documental(text: str, file_name: str) -> str:
     ):
         return "guia_remision"
 
-    if "ORDENDESERVICIO" in compact or "ORDENDECOMPRA" in compact:
+    if (
+    "ORDENDECOMPRA" in compact
+        and "20299922821" in text_u
+        and (
+            "BB TECNOLOGIA INDUSTRIAL" in text_u
+            or "BB TECNOLOGÍA INDUSTRIAL" in text_u
+        )
+        and re.search(r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*\d{3,8}", text_u, re.I)
+    ):
         return "orden_compra"
+
+    if "ORDENDESERVICIO" in compact:
+        return "orden_servicio"
 
     if "NOTAINGRESO" in compact:
         return "nota_ingreso"
@@ -89,19 +100,28 @@ def _extract_guia_fields(text_u: str, name_u: str) -> tuple[str | None, str | No
 
 def _extract_oc_fields(text_u: str, name_u: str):
     text_u = normalize_text(text_u)
+    compact = compact_text(text_u)
 
-    if "ORDEN DE SERVICIO" in text_u:
-        m = re.search(r"N[°º]?\s*:?\s*(\d{3,6})", text_u)
+    # Si es factura, NO convertirla en OC solo porque menciona "Orden de Compra"
+    if "FACTURAELECTRONICA" in compact:
+        return None, None
+
+    tiene_empresa = (
+        "BB TECNOLOGIA INDUSTRIAL" in text_u
+        or "BB TECNOLOGÍA INDUSTRIAL" in text_u
+    )
+
+    tiene_ruc_empresa = "20299922821" in text_u
+
+    # OC real: debe tener título formal + empresa destino + RUC destino
+    if tiene_empresa and tiene_ruc_empresa:
+        m = re.search(
+            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+            text_u,
+            re.I,
+        )
         if m:
             return None, m.group(1).zfill(6)
-
-    m = re.search(r"ORDEN\s+DE\s+COMPRA\s*:?\s*(\d{3,6})", text_u)
-    if m:
-        return None, m.group(1).zfill(6)
-
-    m = re.search(r"\bO[./-]?C\.?\s*:?\s*(\d{3,6})\b", text_u)
-    if m:
-        return None, m.group(1).zfill(6)
 
     return None, None
 
