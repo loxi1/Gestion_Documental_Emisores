@@ -1,14 +1,185 @@
-Creo que debes tener un helper de esto porque lo usas en varios archivos:
-gestiondocumental_mvp=# select nombre_oficial, abreviatura, ruc from clientes_destino;
-          nombre_oficial          | abreviatura |     ruc
-----------------------------------+-------------+-------------
- BB TECNOLOGIA INDUSTRIAL S.A.C.  | BBTEC       | 20299922821
- BBTI S.A.C.                      | BBTI        | 20565747356
- CONSORCIO CIMA ENERGY            | CIMA        | 20613521004
- CONSORCIO ILUMINACION TARMA 2025 | TARMA       | 20614307197
- CONSORCIO HUANCAVELICA           | HUANCA      | 20612122416
- Consorcio Kimbiri                | KIMBIRI     | 20609856140
-(6 rows)
+Sí, esa regla es mucho mejor y debe ser dinámica por cliente.
+Regla final OC/OS
+Para detectar OC:
+Plain text
+Orden de Compra N*:002912
++ nombre oficial del cliente destino
++ RUC del cliente destino
+Para detectar OS:
+Plain text
+Orden de Servicio N*:000229
++ nombre oficial del cliente destino
++ RUC del cliente destino
+Así ya no dependes solo de BBTEC.
+Cambio necesario en document_enricher.py
+Primero, en clasificar_paginas.py debes pasar también el cliente:
+Python
+data = enrich_page(
+    row["texto_extraido"] or "",
+    row["archivo_fuente"],
+    cliente
+)
+Luego en document_enricher.py, agrega este mapa:
+Python
+CLIENTES_DESTINO = {
+    "BBTEC": {
+        "nombre": "BB TECNOLOGIA INDUSTRIAL",
+        "ruc": "20299922821",
+    },
+    "BBTI": {
+        "nombre": "BBTI",
+        "ruc": "20565747356",
+    },
+    "CIMA": {
+        "nombre": "CONSORCIO CIMA ENERGY",
+        "ruc": "20613521004",
+    },
+    "TARMA": {
+        "nombre": "CONSORCIO ILUMINACION TARMA",
+        "ruc": "20614307197",
+    },
+    "HUANCA": {
+        "nombre": "CONSORCIO HUANCAVELICA",
+        "ruc": "20612122416",
+    },
+    "KIMBIRI": {
+        "nombre": "CONSORCIO KIMBIRI",
+        "ruc": "20609856140",
+    },
+}
+Función helper
+Python
+def tiene_cliente_destino(text: str, cliente: str) -> bool:
+    t = norm(text)
+    data = CLIENTES_DESTINO.get(cliente.upper())
 
+    if not data:
+        return False
 
-gestiondocumental_mvp=#
+    return data["nombre"] in t and data["ruc"] in t
+OC final
+Python
+def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
+        return False
+
+    tiene_titulo_oc = bool(
+        re.search(
+            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*\d{3,8}",
+            t,
+            re.I,
+        )
+    )
+
+    return tiene_titulo_oc and tiene_cliente_destino(t, cliente)
+OS final
+Python
+def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
+        return False
+
+    tiene_titulo_os = bool(
+        re.search(
+            r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*\d{3,8}",
+            t,
+            re.I,
+        )
+    )
+
+    return tiene_titulo_os and tiene_cliente_destino(t, cliente)
+Extract OS corregido
+Python
+def extract_os(text: str, cliente: str = "BBTEC") -> dict:
+    t = norm(text)
+
+    if not is_orden_servicio_text(t, cliente):
+        return {"numero": None, "clave": None}
+
+    m = re.search(
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+        t,
+        re.I,
+    )
+
+    if not m:
+        return {"numero": None, "clave": None}
+
+    numero = m.group(1).zfill(6)
+
+    return {
+        "numero": numero,
+        "clave": f"OS|{numero}",
+    }
+Extract OC corregido
+Python
+def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
+    t = norm(text)
+
+    if not is_orden_compra_text(t, cliente):
+        return {"numero": None, "clave": None}
+
+    m = re.search(
+        r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*(\d{3,8})",
+        t,
+        re.I,
+    )
+
+    if not m:
+        return {"numero": None, "clave": None}
+
+    numero = m.group(1).zfill(6)
+
+    return {
+        "numero": numero,
+        "clave": f"OC|{numero}",
+    }
+En detect_tipo()
+Debe recibir cliente:
+Python
+def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
+    t = norm(text)
+    c = compact_text(t)
+
+    if is_proforma_text(t, archivo_fuente):
+        return "proforma"
+
+    if is_nota_ingreso_text(t):
+        return "nota_ingreso"
+
+    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
+        return "factura"
+
+    if is_guia_text(t, archivo_fuente):
+        return "guia_remision"
+
+    if is_orden_servicio_text(t, cliente):
+        return "orden_servicio"
+
+    if is_orden_compra_text(t, cliente):
+        return "orden_compra"
+
+    if is_pago_text(t):
+        return "pago"
+
+    return "otro"
+En enrich_page()
+Python
+def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
+    tipo = detect_tipo(text, archivo_fuente, cliente)
+Y donde llama OC/OS:
+Python
+elif tipo == "orden_servicio":
+    os_data = extract_os(text, cliente)
+
+elif tipo == "orden_compra":
+    oc_data = extract_oc(text, cliente)
+Con esto, Orden de Servicio N*:000229 ya saldrá como:
+Plain text
+OS|000229
+y no tomará SIM PPTO N° 008.
