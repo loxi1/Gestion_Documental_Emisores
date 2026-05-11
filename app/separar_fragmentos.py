@@ -98,7 +98,7 @@ def process(year: int, cliente: str, month: int):
                         estado
                     )
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'separado')
-                    ON CONFLICT (archivo_fuente, pagina) DO UPDATE
+                    ON CONFLICT (cliente_abreviatura, anio, mes,archivo_fuente, pagina) DO UPDATE
                     SET tipo_detectado = EXCLUDED.tipo_detectado,
                         texto_extraido = EXCLUDED.texto_extraido,
                         fuente_texto = EXCLUDED.fuente_texto,

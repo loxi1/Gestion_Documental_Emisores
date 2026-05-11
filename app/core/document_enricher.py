@@ -106,7 +106,7 @@ def is_nota_ingreso_text(text: str) -> bool:
 
     return bool(
         "NOTADEINGRESO" in c
-        or re.search(r"\bNI\s*[:\-]\s*\d{3,10}\b", t, re.I)
+        or re.search(r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*\d{3,10}", t, re.I)
     )
 
 def is_proforma_text(text: str, filename: str = "") -> bool:
@@ -136,16 +136,15 @@ def is_pago_text(text: str) -> bool:
 
 def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
     t = norm(text)
-    c = compact_text(t)
 
-    if is_proforma_text(t, archivo_fuente):
-        return "proforma"
+    if is_pago_detraccion_text(t):
+        return "pago_detraccion"
+
+    if is_pago_transferencia_text(t):
+        return "pago_transferencia"
 
     if is_nota_ingreso_text(t):
         return "nota_ingreso"
-
-    if "FACTURAELECTRONICA" in c or "FACTURA" in t:
-        return "factura"
 
     if is_guia_text(t, archivo_fuente):
         return "guia_remision"
@@ -156,8 +155,8 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     if is_orden_compra_text(t, cliente):
         return "orden_compra"
 
-    if is_pago_text(t):
-        return "pago"
+    if is_factura_text(t, archivo_fuente):
+        return "factura"
 
     return "otro"
 
@@ -409,6 +408,11 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "numero": ni["numero"],
             "clave_documental": ni["clave"],
         })
+    
+    elif tipo in ("pago_detraccion", "pago_transferencia", "otro"):
+        data.update({
+            "clave_documental": None,
+        })
 
     return data
 
@@ -420,3 +424,54 @@ def tiene_cliente_destino(text: str, cliente: str) -> bool:
         return False
 
     return data["nombre"] in t and data["ruc"] in t
+
+
+def is_pago_detraccion_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "SISTEMADEPAGODEOBLIGACIONESTRIBUTARIAS" in c
+        or "DLEG940" in c
+        or "DETRACCION" in t
+        or "DETRACCIONES" in t
+        or "MONTO DEPOSITO" in t
+        or "MONTO DEL DEPOSITO" in t
+        or "N CUENTA DE DETRACCIONES" in t
+        or "CUENTA DE DETRACCIONES" in t
+    )
+
+
+def is_pago_transferencia_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "TRANSFERENCIAS" in t
+        or "TRANSFERENCIA INTERBANCARIA" in t
+        or "TRANSFERENCIA A CUENTAS DE TERCEROS" in t
+        or "CONSTANCIA DE OPERACION" in t
+        or "CONSTANCIADEOPERACION" in c
+        or "IMPORTE TRANSFERIDO" in t
+        or "IMPORTE CARGADO" in t
+        or "CUENTA DE CARGO" in t
+        or "CUENTA DE ABONO" in t
+        or "NUMERO DE OPERACION" in t
+        or "CODIGO DE SOLICITUD" in t
+    )
+
+
+def is_factura_text(text: str, filename: str = "") -> bool:
+    t = norm(text)
+    c = compact_text(t)
+    name = norm(filename)
+
+    return bool(
+        "FACTURAELECTRONICA" in c
+        or "FACTURA ELECTRONICA" in t
+        or "FACTURA ELECTRÓNICA" in t
+        or "REPRESENTACION IMPRESA DE LA FACTURA" in t
+        or "REPRESENTACIÓN IMPRESA DE LA FACTURA" in t
+        or re.search(r"\b(F[A-Z0-9]{2,4})\s*[- ]\s*\d{1,10}\b", t)
+        or re.search(r"\b(F[A-Z0-9]{2,4})\s+\d{1,10}\b", name)
+    )
