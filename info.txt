@@ -1,1 +1,781 @@
-Se tiene clasificar_paginas.py por favor validar ya se actualizo los cambios validar
+agrupar_fragmentos.py
+import argparse
+from pathlib import Path
+import fitz
+
+from core.db import get_cursor
+
+BASE_SALIDA = Path("data/salida")
+
+
+def parse_clave(clave: str) -> dict:
+    parts = clave.split("|")
+
+    if parts[0] == "FACTURA":
+        return {"tipo": "FACTURA", "ruc": parts[1], "serie": parts[2], "numero": parts[3]}
+
+    if parts[0] == "GUIA":
+        return {"tipo": "GUIA_REMISION", "ruc": parts[1], "serie": parts[2], "numero": parts[3]}
+
+    if parts[0] == "OC":
+        return {"tipo": "OC", "numero": parts[1]}
+
+    if parts[0] == "OS":
+        return {"tipo": "OS", "numero": parts[1]}
+
+    if parts[0] == "NI":
+        return {"tipo": "NOTA_INGRESO", "numero": parts[1]}
+
+    if parts[0] == "PAGO_TRANSFERENCIA":
+        return {
+            "tipo": "PAGO_TRANSFERENCIA",
+            "banco": parts[1] if len(parts) > 1 else "SIN_BANCO",
+            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
+        }
+
+    if parts[0] == "PAGO_DETRACCION":
+        if len(parts) >= 4:
+            return {
+                "tipo": "PAGO_DETRACCION",
+                "ruc": parts[1],
+                "serie": parts[2],
+                "numero": parts[3],
+            }
+
+        return {
+            "tipo": "PAGO_DETRACCION",
+            "banco": parts[1] if len(parts) > 1 else "BN",
+            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
+        }
+
+    return {"tipo": "OTRO"}
+
+
+def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) -> str:
+    data = parse_clave(clave)
+    p_ini = min(paginas)
+    p_fin = max(paginas)
+    rango = f"P{p_ini:03d}-P{p_fin:03d}"
+    sufijo_bloque = f" B{bloque:02d}" if bloque > 1 else ""
+    tipo = data["tipo"]
+
+    if tipo in ("FACTURA", "GUIA_REMISION"):
+        return f"{asiento} {tipo} {data['serie']} {data['numero']} {data['ruc']} {rango}{sufijo_bloque}.pdf"
+
+    if tipo in ("OC", "OS", "NOTA_INGRESO"):
+        return f"{asiento} {tipo} {data['numero']} {rango}{sufijo_bloque}.pdf"
+
+    if tipo == "PAGO_TRANSFERENCIA":
+        return f"{asiento} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']} {rango}{sufijo_bloque}.pdf"
+
+    if tipo == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{asiento} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']} {rango}{sufijo_bloque}.pdf"
+        return f"{asiento} PAGO_DETRACCION {data['banco']} {data['codigo']} {rango}{sufijo_bloque}.pdf"
+
+    return f"{asiento} OTRO {rango}{sufijo_bloque}.pdf"
+
+
+def crear_pdf(paginas: list[dict], output_pdf: Path):
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    doc_out = fitz.open()
+
+    for row in paginas:
+        ruta = row["ruta_pagina_pdf"]
+        if not ruta:
+            print(f"[SIN RUTA] ID {row['id']} {row['archivo_fuente']} P{row['pagina']}")
+            continue
+
+        page_pdf = Path(ruta)
+        if not page_pdf.exists():
+            print(f"[NO EXISTE] {page_pdf}")
+            continue
+
+        with fitz.open(page_pdf) as doc_in:
+            doc_out.insert_pdf(doc_in)
+
+    if doc_out.page_count > 0:
+        doc_out.save(output_pdf)
+
+    doc_out.close()
+
+
+def construir_bloques(rows: list[dict]):
+    bloques = []
+    bloque_actual = []
+    clave_actual = None
+    asiento_actual = None
+    contador_bloques = {}
+
+    for row in rows:
+        asiento = row["asiento_contable"]
+        clave = row["clave_documental"]
+
+        cambio = asiento != asiento_actual or clave != clave_actual
+
+        if cambio and bloque_actual:
+            bloques.append(bloque_actual)
+            bloque_actual = []
+
+        bloque_actual.append(row)
+        asiento_actual = asiento
+        clave_actual = clave
+
+    if bloque_actual:
+        bloques.append(bloque_actual)
+
+    resultado = []
+
+    for bloque in bloques:
+        asiento = bloque[0]["asiento_contable"]
+        clave = bloque[0]["clave_documental"]
+        k = (asiento, clave)
+        contador_bloques[k] = contador_bloques.get(k, 0) + 1
+        resultado.append((contador_bloques[k], bloque))
+
+    return resultado
+
+
+def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+    salida = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "provisional"
+    salida.mkdir(parents=True, exist_ok=True)
+
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE estado = 'clasificado'
+              AND clave_documental IS NOT NULL
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+            ORDER BY asiento_contable, pagina
+        """, (cliente, year, month))
+        rows = cur.fetchall()
+
+    bloques = construir_bloques(rows)
+    total = 0
+
+    for bloque_num, paginas in bloques:
+        paginas_ordenadas = sorted(paginas, key=lambda x: x["pagina"])
+        asiento = paginas_ordenadas[0]["asiento_contable"]
+        clave = paginas_ordenadas[0]["clave_documental"]
+        nums_paginas = [p["pagina"] for p in paginas_ordenadas]
+
+        filename = build_filename(asiento, clave, nums_paginas, bloque_num)
+        output_pdf = salida / filename
+
+        crear_pdf(paginas_ordenadas, output_pdf)
+
+        if output_pdf.exists():
+            data = parse_clave(clave)
+
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    INSERT INTO documentos_agrupados (
+                        asiento_contable,
+                        clave_documental,
+                        tipo_documental,
+                        nombre_archivo,
+                        ruta_archivo,
+                        paginas,
+                        estado,
+                        cliente_abreviatura,
+                        anio,
+                        mes,
+                        origen
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,'agrupado',%s,%s,%s,'fragmentos')
+                """, (
+                    asiento,
+                    clave,
+                    data["tipo"],
+                    filename,
+                    str(output_pdf),
+                    ",".join(str(p) for p in nums_paginas),
+                    cliente,
+                    year,
+                    month,
+                ))
+
+            total += 1
+            print(f"[AGRUPADO] {filename}")
+
+    print(f"Total agrupados: {total}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+    args = parser.parse_args()
+
+    procesar(args.year, args.cliente, args.month)
+
+distribuir_agrupados.py
+import argparse
+import re
+import shutil
+import unicodedata
+from pathlib import Path
+
+from core.db import get_cursor
+
+BASE_SALIDA = Path("data/salida")
+
+
+def safe_text(value: str | None) -> str:
+    value = value or ""
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^A-Za-z0-9]+", "_", value)
+    return value.strip("_").upper() or "SIN_RAZON_SOCIAL"
+
+
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+
+    base = path.with_suffix("")
+    ext = path.suffix
+    i = 2
+
+    while True:
+        nuevo = Path(f"{base}_{i}{ext}")
+        if not nuevo.exists():
+            return nuevo
+        i += 1
+
+
+def mover(origen: Path, destino: Path):
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino = unique_path(destino)
+    shutil.move(str(origen), str(destino))
+    return destino
+
+
+def parse_clave(clave: str) -> dict:
+    p = clave.split("|")
+
+    if p[0] == "FACTURA":
+        return {"tipo": "FACTURA", "ruc": p[1], "serie": p[2], "numero": p[3]}
+
+    if p[0] == "GUIA":
+        return {"tipo": "GUIA_REMISION", "ruc": p[1], "serie": p[2], "numero": p[3]}
+
+    if p[0] == "OC":
+        return {"tipo": "ORDEN_COMPRA", "numero": p[1]}
+
+    if p[0] == "OS":
+        return {"tipo": "ORDEN_SERVICIO", "numero": p[1]}
+
+    if p[0] == "NI":
+        return {"tipo": "NOTA_INGRESO", "numero": p[1]}
+
+    if p[0] == "PAGO_TRANSFERENCIA":
+        return {
+            "tipo": "PAGO_TRANSFERENCIA",
+            "banco": p[1] if len(p) > 1 else "SIN_BANCO",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
+    if p[0] == "PAGO_DETRACCION":
+        if len(p) >= 4:
+            return {"tipo": "PAGO_DETRACCION", "ruc": p[1], "serie": p[2], "numero": p[3]}
+
+        return {
+            "tipo": "PAGO_DETRACCION",
+            "banco": p[1] if len(p) > 1 else "BN",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
+    return {"tipo": "OTRO"}
+
+
+def obtener_razones(cliente: str, year: int, month: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT DISTINCT ruc_emisor, razon_social_emisor
+            FROM documentos_paginas
+            WHERE ruc_emisor IS NOT NULL
+              AND razon_social_emisor IS NOT NULL
+              AND razon_social_emisor <> ''
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
+        return {row["ruc_emisor"]: row["razon_social_emisor"] for row in cur.fetchall()}
+
+
+def obtener_control_por_asiento(cliente: str, year: int, month: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT asiento_contable, tipo_detectado, orden_compra, orden_servicio, pagina
+            FROM documentos_paginas
+            WHERE estado = 'clasificado'
+              AND clave_documental IS NOT NULL
+              AND tipo_detectado IN ('orden_compra', 'orden_servicio')
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+            ORDER BY asiento_contable, pagina
+        """, (cliente, year, month))
+
+        controles = {}
+
+        for row in cur.fetchall():
+            asiento = row["asiento_contable"]
+
+            if asiento in controles:
+                continue
+
+            if row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
+                controles[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
+
+            elif row["tipo_detectado"] == "orden_servicio" and row["orden_servicio"]:
+                controles[asiento] = ("OS", str(row["orden_servicio"]).zfill(6))
+
+        return controles
+
+
+def nombre_con_oc(cliente: str, control_tipo: str, control_num: str, clave: str, razones: dict) -> str:
+    data = parse_clave(clave)
+    prefix = f"{cliente} {control_tipo} {control_num} -"
+
+    if data["tipo"] == "FACTURA":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{prefix} FACTURA {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if data["tipo"] == "GUIA_REMISION":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{prefix} GUIA_REMISION {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if data["tipo"] == "ORDEN_COMPRA":
+        return f"{prefix} ORDEN_COMPRA {data['numero']}.pdf"
+
+    if data["tipo"] == "ORDEN_SERVICIO":
+        return f"{prefix} ORDEN_SERVICIO {data['numero']}.pdf"
+
+    if data["tipo"] == "NOTA_INGRESO":
+        return f"{prefix} NOTA_INGRESO {data['numero']}.pdf"
+
+    if data["tipo"] == "PAGO_TRANSFERENCIA":
+        return f"{prefix} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']}.pdf"
+
+    if data["tipo"] == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{prefix} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
+        return f"{prefix} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+
+    return f"{prefix} SOPORTE.pdf"
+
+
+def nombre_sin_oc(cliente: str, asiento: str, clave: str, razones: dict) -> str:
+    data = parse_clave(clave)
+
+    if data["tipo"] == "FACTURA":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{asiento} {cliente} FACTURA {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if data["tipo"] == "GUIA_REMISION":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{asiento} {cliente} GUIA_REMISION {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
+
+    if data["tipo"] == "NOTA_INGRESO":
+        return f"{asiento} {cliente} NOTA_INGRESO {data['numero']}.pdf"
+
+    if data["tipo"] == "PAGO_TRANSFERENCIA":
+        return f"{asiento} {cliente} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']}.pdf"
+
+    if data["tipo"] == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{asiento} {cliente} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
+        return f"{asiento} {cliente} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+
+    return f"{asiento} {cliente} SOPORTE.pdf"
+
+
+def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+    base_mes = BASE_SALIDA / str(year) / cliente / f"{month:02d}"
+    dir_con_oc = base_mes / "con_oc"
+    dir_sin_oc = base_mes / "sin_oc"
+    dir_revision = base_mes / "revision"
+
+    dir_con_oc.mkdir(parents=True, exist_ok=True)
+    dir_sin_oc.mkdir(parents=True, exist_ok=True)
+    dir_revision.mkdir(parents=True, exist_ok=True)
+
+    controles = obtener_control_por_asiento(cliente, year, month)
+    razones = obtener_razones(cliente, year, month)
+
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_agrupados
+            WHERE estado = 'agrupado'
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+            ORDER BY asiento_contable, nombre_archivo
+        """, (cliente, year, month))
+        rows = cur.fetchall()
+
+    con_oc = sin_oc = revision = 0
+
+    for row in rows:
+        origen = Path(row["ruta_archivo"])
+
+        if not origen.exists():
+            print(f"[NO EXISTE] {origen}")
+            revision += 1
+            continue
+
+        asiento = row["asiento_contable"]
+        clave = row["clave_documental"]
+
+        if asiento in controles:
+            control_tipo, control_num = controles[asiento]
+            nuevo_nombre = nombre_con_oc(cliente, control_tipo, control_num, clave, razones)
+            destino = mover(origen, dir_con_oc / nuevo_nombre)
+            estado = "distribuido_con_oc"
+            con_oc += 1
+            print(f"[CON_OC] {destino.name}")
+        else:
+            nuevo_nombre = nombre_sin_oc(cliente, asiento, clave, razones)
+            destino = mover(origen, dir_sin_oc / nuevo_nombre)
+            estado = "distribuido_sin_oc"
+            sin_oc += 1
+            print(f"[SIN_OC] {destino.name}")
+
+        with get_cursor(commit=True) as (_, cur):
+            cur.execute("""
+                UPDATE documentos_agrupados
+                SET nombre_archivo = %s,
+                    ruta_final = %s,
+                    estado = %s
+                WHERE id = %s
+            """, (
+                destino.name,
+                str(destino),
+                estado,
+                row["id"],
+            ))
+
+    print("\nDistribución finalizada.")
+    print(f"Con OC/OS: {con_oc}")
+    print(f"Sin OC/OS: {sin_oc}")
+    print(f"Revisión: {revision}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+
+    args = parser.parse_args()
+    procesar(args.year, args.cliente, args.month)
+
+procesar_qr_pendientes.py
+import argparse
+from pathlib import Path
+
+from core.db import get_cursor
+from core.qr_reader import decode_qr_from_pdf
+from core.qr_parser import parse_qr_payload
+
+
+def build_clave(tipo: str, ruc: str | None, serie: str | None, numero: str | None) -> str | None:
+    if not tipo or not serie or not numero:
+        return None
+
+    if tipo == "factura":
+        return f"FACTURA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    if tipo == "guia_remision":
+        return f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    return None
+
+
+def aplicar_qr_a_data(parsed: dict) -> dict:
+    tipo = parsed.get("tipo_documental")
+    serie = parsed.get("serie")
+    numero = parsed.get("numero")
+    ruc = parsed.get("ruc_emisor")
+
+    return {
+        "tipo": tipo,
+        "serie": serie,
+        "numero": numero,
+        "ruc": ruc,
+        "clave_documental": build_clave(tipo, ruc, serie, numero),
+    }
+
+
+def procesar(year: int, cliente: str, month: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE requiere_qr = TRUE
+              AND qr_procesado = FALSE
+            ORDER BY archivo_fuente, pagina
+        """)
+        rows = cur.fetchall()
+
+    print(f"Páginas pendientes QR: {len(rows)}")
+
+    for row in rows:
+        ruta = row.get("ruta_pagina_pdf")
+
+        if not ruta:
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = 'Sin ruta_pagina_pdf',
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (row["id"],))
+            print(f"[SIN RUTA] {row['archivo_fuente']} P{row['pagina']}")
+            continue
+
+        pdf_path = Path(ruta)
+
+        if not pdf_path.exists():
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = %s,
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (f"No existe archivo: {pdf_path}", row["id"]))
+            print(f"[NO EXISTE] {pdf_path}")
+            continue
+
+        print(f"[QR] {row['archivo_fuente']} P{row['pagina']}")
+
+        qr_candidates = decode_qr_from_pdf(pdf_path, max_pages=1, dpi=280)
+
+        if not qr_candidates:
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = 'QR no detectado',
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (row["id"],))
+            print("  QR no detectado")
+            continue
+
+        aplicado = False
+
+        for raw in qr_candidates:
+            parsed = parse_qr_payload(raw)
+
+            if not parsed:
+                continue
+
+            tipo_qr = parsed.get("tipo_documental")
+
+            if tipo_qr not in ("factura", "guia_remision"):
+                continue
+
+            data = aplicar_qr_a_data(parsed)
+
+            if not data["clave_documental"]:
+                continue
+
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET tipo_detectado = %s,
+                        serie = %s,
+                        numero = %s,
+                        ruc_emisor = %s,
+                        clave_documental = %s,
+                        qr_raw = %s,
+                        qr_procesado = TRUE,
+                        qr_error = NULL,
+                        requiere_qr = FALSE,
+                        estado = 'clasificado'
+                    WHERE id = %s
+                """, (
+                    data["tipo"],
+                    data["serie"],
+                    data["numero"],
+                    data["ruc"],
+                    data["clave_documental"],
+                    raw,
+                    row["id"],
+                ))
+
+            aplicado = True
+            print(f"  OK -> {data['clave_documental']}")
+            break
+
+        if not aplicado:
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = 'QR detectado pero no parseable/usable',
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (row["id"],))
+            print("  QR no usable")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+    args = parser.parse_args()
+
+    procesar(args.year, args.cliente, args.month)
+
+validar que todo compla
+
+editar_pagina_manual.py
+import argparse
+
+from core.db import get_cursor
+
+
+def build_clave(tipo, ruc=None, serie=None, numero=None, oc=None, os=None):
+    if tipo == "factura":
+        if serie and numero and ruc:
+            return f"FACTURA|{ruc}|{serie}|{numero}"
+
+    if tipo == "guia_remision":
+        if serie and numero:
+            return f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    if tipo == "orden_compra":
+        if oc:
+            return f"OC|{str(oc).zfill(6)}"
+
+    if tipo == "orden_servicio":
+        if os:
+            return f"OS|{str(os).zfill(6)}"
+
+    if tipo == "nota_ingreso":
+        if numero:
+            return f"NI|{str(numero).zfill(6)}"
+
+    return None
+
+
+def preguntar(label, actual=None):
+    valor = input(f"{label} [{actual or ''}]: ").strip()
+    return valor if valor else actual
+
+
+def editar(id_pagina: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE id = %s
+        """, (id_pagina,))
+        row = cur.fetchone()
+
+    if not row:
+        print("No existe ese ID.")
+        return
+
+    print("\nDocumento encontrado:")
+    print(f"ID: {row['id']}")
+    print(f"Archivo: {row['archivo_fuente']}")
+    print(f"Página: {row['pagina']}")
+    print(f"Tipo actual: {row['tipo_detectado']}")
+    print(f"Clave actual: {row['clave_documental']}")
+    print(f"Ruta página: {row.get('ruta_pagina_pdf')}")
+    print()
+
+    tipo = preguntar("Tipo", row["tipo_detectado"])
+
+    serie = row["serie"]
+    numero = row["numero"]
+    ruc = row["ruc_emisor"]
+    razon = row["razon_social_emisor"]
+    oc = row["orden_compra"]
+    os = row["orden_servicio"]
+
+    if tipo in ("factura", "guia_remision"):
+        serie = preguntar("Serie", serie)
+        numero = preguntar("Número", numero)
+        ruc = preguntar("RUC emisor", ruc)
+
+        if tipo == "factura":
+            razon = preguntar("Razón social emisor", razon)
+
+    elif tipo == "orden_compra":
+        oc = preguntar("Número OC", oc)
+
+    elif tipo == "orden_servicio":
+        os = preguntar("Número OS", os)
+
+    elif tipo == "nota_ingreso":
+        numero = preguntar("Número Nota Ingreso", numero)
+
+    clave = build_clave(
+        tipo=tipo,
+        ruc=ruc,
+        serie=serie,
+        numero=numero,
+        oc=oc,
+        os=os,
+    )
+
+    print(f"\nNueva clave: {clave}")
+    confirmar = input("¿Guardar cambios? (s/n): ").strip().lower()
+
+    if confirmar != "s":
+        print("Cancelado.")
+        return
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_paginas
+            SET tipo_detectado = %s,
+                serie = %s,
+                numero = %s,
+                ruc_emisor = %s,
+                razon_social_emisor = %s,
+                orden_compra = %s,
+                orden_servicio = %s,
+                clave_documental = %s,
+                requiere_qr = FALSE,
+                qr_procesado = TRUE,
+                qr_error = NULL,
+                estado = 'clasificado'
+            WHERE id = %s
+        """, (
+            tipo,
+            serie,
+            numero,
+            ruc,
+            razon,
+            oc,
+            os,
+            clave,
+            id_pagina,
+        ))
+
+    print("Actualizado correctamente.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--id", type=int, required=True)
+    args = parser.parse_args()
+
+    editar(args.id)
