@@ -13,6 +13,29 @@ CLIENTES_DESTINO = {
     "KIMBIRI": {"nombre": "CONSORCIO KIMBIRI", "ruc": "20609856140"},
 }
 
+BANCOS = {
+    "BCP": ["BCP", "BANCO DE CREDITO", "BANCO DE CRÉDITO"],
+    "BBVA": ["BBVA", "BANCO BBVA"],
+    "IBK": ["INTERBANK", "BANCO INTERNACIONAL DEL PERU", "BANCO INTERNACIONAL DEL PERÚ"],
+    "SCO": ["SCOTIABANK", "SCOTIABANK PERU", "SCOTIABANK PERÚ"],
+    "PIC": ["PICHINCHA", "BANCO PICHINCHA"],
+    "BANBIF": ["BANBIF", "BANCO INTERAMERICANO DE FINANZAS"],
+    "BN": ["BANCO DE LA NACION", "BANCO DE LA NACIÓN"],
+    "CITI": ["CITIBANK", "CITIBANK PERU", "CITIBANK PERÚ"],
+    "COM": ["BANCO DE COMERCIO"],
+}
+
+
+def detect_banco(text: str) -> str | None:
+    t = norm(text)
+
+    for abrev, aliases in BANCOS.items():
+        for alias in aliases:
+            if norm(alias) in t:
+                return abrev
+
+    return None
+
 
 def norm(text: str) -> str:
     return normalize_text(text or "")
@@ -409,9 +432,23 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "clave_documental": ni["clave"],
         })
     
-    elif tipo in ("pago_detraccion", "pago_transferencia", "otro"):
+    elif tipo == "pago_transferencia":
+        p = extract_pago_transferencia(text)
         data.update({
-            "clave_documental": None,
+            "banco": p["banco"],
+            "codigo_operacion": p["codigo_operacion"],
+            "clave_documental": p["clave"],
+        })
+
+    elif tipo == "pago_detraccion":
+        p = extract_pago_detraccion(text)
+        data.update({
+            "banco": p["banco"],
+            "codigo_operacion": p["codigo_operacion"],
+            "serie": p["serie"],
+            "numero": p["numero"],
+            "ruc": p["ruc"],
+            "clave_documental": p["clave"],
         })
 
     return data
@@ -475,3 +512,88 @@ def is_factura_text(text: str, filename: str = "") -> bool:
         or re.search(r"\b(F[A-Z0-9]{2,4})\s*[- ]\s*\d{1,10}\b", t)
         or re.search(r"\b(F[A-Z0-9]{2,4})\s+\d{1,10}\b", name)
     )
+
+def detect_banco(text: str) -> str | None:
+    t = norm(text)
+
+    for abrev, aliases in BANCOS.items():
+        for alias in aliases:
+            if norm(alias) in t:
+                return abrev
+
+    return None
+
+
+def extract_codigo_operacion(text: str, banco: str | None = None) -> str | None:
+    t = norm(text)
+
+    patrones = [
+        r"NUMERO\s+DE\s+OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
+        r"N[°º]\s*DE\s*OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
+        r"CODIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"CODIGO\s+OPERACION\s*:?\s*(\d{3,30})",
+        r"NUMERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
+    ]
+
+    for patron in patrones:
+        m = re.search(patron, t, re.I)
+        if m:
+            return re.sub(r"\s+", "", m.group(1).replace(",", ""))
+
+    return None
+
+
+def extract_pago_transferencia(text: str) -> dict:
+    banco = detect_banco(text)
+    codigo = extract_codigo_operacion(text, banco)
+
+    clave = None
+    if banco and codigo:
+        clave = f"PAGO_TRANSFERENCIA|{banco}|{codigo}"
+
+    return {
+        "banco": banco,
+        "codigo_operacion": codigo,
+        "clave": clave,
+    }
+
+
+def extract_pago_detraccion(text: str) -> dict:
+    t = norm(text)
+
+    ruc = None
+    serie = None
+    numero = None
+
+    ruc_m = re.search(r"RUC\s+DEL\s+PROVEEDOR\s*:?\s*((10|20)\d{9})", t)
+    if ruc_m:
+        ruc = ruc_m.group(1)
+
+    comp_m = re.search(
+        r"NUMERO\s+DE\s+COMPROBANTE\s*:?\s*([A-Z0-9]{3,5})\s*[- ]?\s*0*(\d{1,10})",
+        t,
+        re.I
+    )
+
+    if comp_m:
+        serie = comp_m.group(1)
+        numero = comp_m.group(2)
+
+    codigo = extract_codigo_operacion(text, "BN")
+
+    clave = None
+    if ruc and serie and numero:
+        clave = f"PAGO_DETRACCION|{ruc}|{serie}|{numero}"
+    elif codigo:
+        clave = f"PAGO_DETRACCION|BN|{codigo}"
+
+    return {
+        "banco": "BN",
+        "codigo_operacion": codigo,
+        "serie": serie,
+        "numero": numero,
+        "ruc": ruc,
+        "clave": clave,
+    }
+
+
