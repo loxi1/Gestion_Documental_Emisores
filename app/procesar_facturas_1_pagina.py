@@ -139,6 +139,14 @@ def registrar_documento(
             ),
         )
 
+registrar_documento_agrupado_factura_1(
+    year=year,
+    month=month,
+    cliente=cliente,
+    data=data,
+    pdf_destino=destino,
+)
+
 
 def procesar(year: int, cliente: str, month: int):
     pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
@@ -201,6 +209,43 @@ def procesar(year: int, cliente: str, month: int):
 
     print(f"Procesados: {procesados}")
 
+def registrar_documento_agrupado_factura_1(
+    year: int,
+    month: int,
+    cliente: str,
+    data: dict,
+    pdf_destino: Path,
+):
+    clave = f"FACTURA|{data['ruc']}|{data['serie']}|{data['numero']}"
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO documentos_agrupados (
+                asiento_contable,
+                clave_documental,
+                tipo_documental,
+                nombre_archivo,
+                ruta_archivo,
+                ruta_final,
+                paginas,
+                estado,
+                cliente_abreviatura,
+                anio,
+                mes,
+                origen
+            )
+            VALUES (%s,%s,'FACTURA',%s,%s,%s,'1','distribuido_sin_oc',%s,%s,%s,'factura_1_pagina')
+            ON CONFLICT DO NOTHING
+        """, (
+            data["asiento"],
+            clave,
+            pdf_destino.name,
+            str(pdf_destino),
+            str(pdf_destino),
+            cliente,
+            year,
+            month,
+        ))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

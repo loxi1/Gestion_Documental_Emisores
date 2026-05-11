@@ -5,30 +5,12 @@ from slugify import slugify
 from core.text_utils import normalize_text
 
 CLIENTES_DESTINO = {
-    "BBTEC": {
-        "nombre": "BB TECNOLOGIA INDUSTRIAL",
-        "ruc": "20299922821",
-    },
-    "BBTI": {
-        "nombre": "BBTI",
-        "ruc": "20565747356",
-    },
-    "CIMA": {
-        "nombre": "CONSORCIO CIMA ENERGY",
-        "ruc": "20613521004",
-    },
-    "TARMA": {
-        "nombre": "CONSORCIO ILUMINACION TARMA",
-        "ruc": "20614307197",
-    },
-    "HUANCA": {
-        "nombre": "CONSORCIO HUANCAVELICA",
-        "ruc": "20612122416",
-    },
-    "KIMBIRI": {
-        "nombre": "CONSORCIO KIMBIRI",
-        "ruc": "20609856140",
-    },
+    "BBTEC": {"nombre": "BB TECNOLOGIA INDUSTRIAL", "ruc": "20299922821"},
+    "BBTI": {"nombre": "BBTI", "ruc": "20565747356"},
+    "CIMA": {"nombre": "CONSORCIO CIMA ENERGY", "ruc": "20613521004"},
+    "TARMA": {"nombre": "CONSORCIO ILUMINACION TARMA", "ruc": "20614307197"},
+    "HUANCA": {"nombre": "CONSORCIO HUANCAVELICA", "ruc": "20612122416"},
+    "KIMBIRI": {"nombre": "CONSORCIO KIMBIRI", "ruc": "20609856140"},
 }
 
 
@@ -124,7 +106,7 @@ def is_nota_ingreso_text(text: str) -> bool:
 
     return bool(
         "NOTADEINGRESO" in c
-        and re.search(r"NOTA\s+DE\s+INGRESO\s+0*\d{3,10}", t, re.I | re.S)
+        or re.search(r"\bNI\s*[:\-]\s*\d{3,10}\b", t, re.I)
     )
 
 def is_proforma_text(text: str, filename: str = "") -> bool:
@@ -327,10 +309,7 @@ def extract_os(text: str, cliente: str = "BBTEC") -> dict:
 
     numero = m.group(1).zfill(6)
 
-    return {
-        "numero": numero,
-        "clave": f"OS|{numero}",
-    }
+    return {"numero": numero, "clave": f"OS|{numero}"}
 
 
 def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
@@ -350,10 +329,7 @@ def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
 
     numero = m.group(1).zfill(6)
 
-    return {
-        "numero": numero,
-        "clave": f"OC|{numero}",
-    }
+    return {"numero": numero, "clave": f"OC|{numero}"}
 
 
 def extract_ni(text: str) -> dict:
@@ -362,29 +338,26 @@ def extract_ni(text: str) -> dict:
     if not is_nota_ingreso_text(t):
         return {"numero": None, "clave": None}
 
-    m = re.search(
-        r"NOTA\s+DE\s+INGRESO\s+0*(\d{3,10})",
-        t,
-        re.I | re.S
-    )
+    patrones = [
+        r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*(\d{3,10})\b",
+        r"\bNI\s*[:\-]\s*(\d{3,10})\b",
+    ]
 
-    if not m:
-        return {"numero": None, "clave": None}
+    for patron in patrones:
+        m = re.search(patron, t, re.I)
+        if m:
+            numero = m.group(1).zfill(6)
+            return {"numero": numero, "clave": f"NI|{numero}"}
 
-    numero = m.group(1).zfill(10)
-
-    return {
-        "numero": numero,
-        "clave": f"NI|{numero}",
-    }
+    return {"numero": None, "clave": None}
 
 
 # ---------------------------------------------------------
 # ENRICH PRINCIPAL
 # ---------------------------------------------------------
 
-def enrich_page(text: str, archivo_fuente: str = "") -> dict:
-    tipo = detect_tipo(text, archivo_fuente)
+def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
+    tipo = detect_tipo(text, archivo_fuente, cliente)
 
     data = {
         "tipo": tipo,

@@ -32,7 +32,7 @@ def process(year: int, cliente: str, month: int):
                 or not data["clave_documental"]
             )
         )
-        
+
         print(
             f"[{row['archivo_fuente']} P{row['pagina']}] "
             f"{data['tipo']} clave={data['clave_documental']}"

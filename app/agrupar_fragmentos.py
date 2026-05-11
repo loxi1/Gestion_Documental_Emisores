@@ -11,63 +11,39 @@ def parse_clave(clave: str) -> dict:
     parts = clave.split("|")
 
     if parts[0] == "FACTURA":
-        return {
-            "tipo": "FACTURA",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-        }
+        return {"tipo": "FACTURA", "ruc": parts[1], "serie": parts[2], "numero": parts[3]}
 
     if parts[0] == "GUIA":
-        return {
-            "tipo": "GUIA_REMISION",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-        }
+        return {"tipo": "GUIA_REMISION", "ruc": parts[1], "serie": parts[2], "numero": parts[3]}
 
     if parts[0] == "OC":
-        return {
-            "tipo": "OC",
-            "numero": parts[1],
-        }
+        return {"tipo": "OC", "numero": parts[1]}
 
     if parts[0] == "OS":
-        return {
-            "tipo": "OS",
-            "numero": parts[1],
-        }
+        return {"tipo": "OS", "numero": parts[1]}
 
     if parts[0] == "NI":
-        return {
-            "tipo": "NOTA_INGRESO",
-            "numero": parts[1],
-        }
+        return {"tipo": "NOTA_INGRESO", "numero": parts[1]}
 
-    return {
-        "tipo": "OTRO",
-    }
+    return {"tipo": "OTRO"}
 
 
-def build_filename(asiento: str, clave: str, paginas: list[int]) -> str:
+def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) -> str:
     data = parse_clave(clave)
-
     p_ini = min(paginas)
     p_fin = max(paginas)
     rango = f"P{p_ini:03d}-P{p_fin:03d}"
-
     tipo = data["tipo"]
 
+    sufijo_bloque = f" B{bloque:02d}" if bloque > 1 else ""
+
     if tipo in ("FACTURA", "GUIA_REMISION"):
-        return (
-            f"{asiento} {tipo} {data['serie']} {data['numero']} "
-            f"{data['ruc']} {rango}.pdf"
-        )
+        return f"{asiento} {tipo} {data['serie']} {data['numero']} {data['ruc']} {rango}{sufijo_bloque}.pdf"
 
     if tipo in ("OC", "OS", "NOTA_INGRESO"):
-        return f"{asiento} {tipo} {data['numero']} {rango}.pdf"
+        return f"{asiento} {tipo} {data['numero']} {rango}{sufijo_bloque}.pdf"
 
-    return f"{asiento} OTRO {rango}.pdf"
+    return f"{asiento} OTRO {rango}{sufijo_bloque}.pdf"
 
 
 def crear_pdf(paginas: list[dict], output_pdf: Path):
@@ -97,6 +73,45 @@ def crear_pdf(paginas: list[dict], output_pdf: Path):
     doc_out.close()
 
 
+def construir_bloques(rows: list[dict]):
+    bloques = []
+    bloque_actual = []
+    clave_actual = None
+    asiento_actual = None
+    contador_bloques = {}
+
+    for row in rows:
+        asiento = row["asiento_contable"]
+        clave = row["clave_documental"]
+
+        cambio = (
+            asiento != asiento_actual
+            or clave != clave_actual
+        )
+
+        if cambio and bloque_actual:
+            bloques.append(bloque_actual)
+            bloque_actual = []
+
+        bloque_actual.append(row)
+        asiento_actual = asiento
+        clave_actual = clave
+
+    if bloque_actual:
+        bloques.append(bloque_actual)
+
+    resultado = []
+
+    for bloque in bloques:
+        asiento = bloque[0]["asiento_contable"]
+        clave = bloque[0]["clave_documental"]
+        k = (asiento, clave)
+        contador_bloques[k] = contador_bloques.get(k, 0) + 1
+        resultado.append((contador_bloques[k], bloque))
+
+    return resultado
+
+
 def procesar(year: int, cliente: str, month: int):
     salida = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "provisional"
     salida.mkdir(parents=True, exist_ok=True)
@@ -107,26 +122,20 @@ def procesar(year: int, cliente: str, month: int):
             FROM documentos_paginas
             WHERE estado = 'clasificado'
               AND clave_documental IS NOT NULL
-            ORDER BY asiento_contable, clave_documental, pagina
+            ORDER BY asiento_contable, pagina
         """)
         rows = cur.fetchall()
 
-    grupos = {}
-
-    for row in rows:
-        key = (
-            row["asiento_contable"],
-            row["clave_documental"],
-        )
-        grupos.setdefault(key, []).append(row)
-
+    bloques = construir_bloques(rows)
     total = 0
 
-    for (asiento, clave), paginas in grupos.items():
+    for bloque_num, paginas in bloques:
         paginas_ordenadas = sorted(paginas, key=lambda x: x["pagina"])
+        asiento = paginas_ordenadas[0]["asiento_contable"]
+        clave = paginas_ordenadas[0]["clave_documental"]
         nums_paginas = [p["pagina"] for p in paginas_ordenadas]
 
-        filename = build_filename(asiento, clave, nums_paginas)
+        filename = build_filename(asiento, clave, nums_paginas, bloque_num)
         output_pdf = salida / filename
 
         crear_pdf(paginas_ordenadas, output_pdf)
@@ -141,9 +150,13 @@ def procesar(year: int, cliente: str, month: int):
                         nombre_archivo,
                         ruta_archivo,
                         paginas,
-                        estado
+                        estado,
+                        cliente_abreviatura,
+                        anio,
+                        mes,
+                        origen
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,'agrupado')
+                    VALUES (%s,%s,%s,%s,%s,%s,'agrupado',%s,%s,%s,'fragmentos')
                 """, (
                     asiento,
                     clave,
@@ -151,6 +164,9 @@ def procesar(year: int, cliente: str, month: int):
                     filename,
                     str(output_pdf),
                     ",".join(str(p) for p in nums_paginas),
+                    cliente,
+                    year,
+                    month,
                 ))
 
             total += 1
@@ -166,5 +182,4 @@ if __name__ == "__main__":
     parser.add_argument("--month", type=int, required=True)
 
     args = parser.parse_args()
-
     procesar(args.year, args.cliente, args.month)
