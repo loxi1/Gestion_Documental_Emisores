@@ -139,14 +139,6 @@ def registrar_documento(
             ),
         )
 
-registrar_documento_agrupado_factura_1(
-    year=year,
-    month=month,
-    cliente=cliente,
-    data=data,
-    pdf_destino=destino,
-)
-
 
 def procesar(year: int, cliente: str, month: int):
     pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
@@ -190,6 +182,14 @@ def procesar(year: int, cliente: str, month: int):
             pdf_origen=pdf,
             pdf_destino=destino,
             hash_sha256=hash_pdf,
+        )
+
+        registrar_documento_agrupado_factura_1(
+            year=year,
+            month=month,
+            cliente=cliente,
+            data=data,
+            pdf_destino=destino,
         )
 
         procesados += 1
