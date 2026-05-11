@@ -5,6 +5,8 @@ from core.document_enricher import enrich_page
 
 
 def process(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT *
