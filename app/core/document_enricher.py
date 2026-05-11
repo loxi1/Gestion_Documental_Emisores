@@ -214,6 +214,7 @@ def extract_factura_from_filename(filename: str) -> dict:
     numero = m.group("numero")
     ruc = m.group("ruc")
     razon = m.group("razon").strip()
+    serie = normalize_serie(serie)
 
     return {
         "serie": serie,
@@ -260,6 +261,7 @@ def extract_guia_fields(text: str, filename: str = "") -> tuple[str | None, str 
             for m in re.finditer(patron, fuente, re.I):
 
                 serie = m.group(1).upper()
+                serie = normalize_serie(serie)
                 numero = m.group(2)
 
                 # filtros basura OCR
@@ -571,13 +573,13 @@ def extract_pago_detraccion(text: str) -> dict:
 
     comp_m = re.search(
         r"NUMERO\s+DE\s+COMPROBANTE\s*:?\s*([A-Z0-9]{3,5})\s*[- ]?\s*0*(\d{1,10})",
-        t,
-        re.I
+        t
     )
 
     if comp_m:
         serie = comp_m.group(1)
         numero = comp_m.group(2)
+        serie = normalize_serie(serie)
 
     codigo = extract_codigo_operacion(text, "BN")
 
@@ -597,3 +599,38 @@ def extract_pago_detraccion(text: str) -> dict:
     }
 
 
+def normalize_serie(serie: str | None) -> str | None:
+    if not serie:
+        return None
+
+    s = serie.upper().strip()
+
+    replacements = {
+        "TOO": "T00",
+        "TO0": "T00",
+        "TGO0O": "TG00",
+        "TGOO": "TG00",
+        "TGO": "TG0",
+        "EGO": "EG0",
+    }
+
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+
+    return s
+
+def extract_oc_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"\bO\s*/\s*C\.?\s*:?\s*0*(\d{3,8})",
+        r"\bOC\s*:?\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s*N?[°º*:]?\s*0*(\d{3,8})",
+    ]
+
+    for p in patterns:
+        m = re.search(p, t)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
