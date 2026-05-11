@@ -1,38 +1,18 @@
 import re
-import unicodedata
 from pathlib import Path
 from slugify import slugify
 
-from core.text_utils import normalize_text, compact_text
+from core.text_utils import compact_text
 
 
 CLIENTES_DESTINO = {
-    "BBTEC": {
-        "nombre": "BB TECNOLOGIA INDUSTRIAL S.A.C.",
-        "ruc": "20299922821",
-    },
-    "BBTI": {
-        "nombre": "BBTI S.A.C.",
-        "ruc": "20565747356",
-    },
-    "CIMA": {
-        "nombre": "CONSORCIO CIMA ENERGY",
-        "ruc": "20613521004",
-    },
-    "TARMA": {
-        "nombre": "CONSORCIO ILUMINACION TARMA 2025",
-        "ruc": "20614307197",
-    },
-    "HUANCA": {
-        "nombre": "CONSORCIO HUANCAVELICA",
-        "ruc": "20612122416",
-    },
-    "KIMBIRI": {
-        "nombre": "CONSORCIO KIMBIRI",
-        "ruc": "20609856140",
-    },
+    "BBTEC": {"nombre": "BB TECNOLOGIA INDUSTRIAL S.A.C.", "ruc": "20299922821"},
+    "BBTI": {"nombre": "BBTI S.A.C.", "ruc": "20565747356"},
+    "CIMA": {"nombre": "CONSORCIO CIMA ENERGY", "ruc": "20613521004"},
+    "TARMA": {"nombre": "CONSORCIO ILUMINACION TARMA 2025", "ruc": "20614307197"},
+    "HUANCA": {"nombre": "CONSORCIO HUANCAVELICA", "ruc": "20612122416"},
+    "KIMBIRI": {"nombre": "CONSORCIO KIMBIRI", "ruc": "20609856140"},
 }
-
 
 BANCOS = {
     "BCP": ["BCP", "BANCO DE CREDITO", "BANCO DE CRÉDITO"],
@@ -41,7 +21,7 @@ BANCOS = {
     "SCO": ["SCOTIABANK", "SCOTIABANK PERU", "SCOTIABANK PERÚ"],
     "PIC": ["PICHINCHA", "BANCO PICHINCHA"],
     "BANBIF": ["BANBIF", "BANCO INTERAMERICANO DE FINANZAS"],
-    "BN": ["BANCO DE LA NACION", "BANCO DE LA NACIÓN", "NACION"],
+    "BN": ["BANCO DE LA NACION", "BANCO DE LA NACIÓN"],
     "CITI": ["CITIBANK", "CITIBANK PERU", "CITIBANK PERÚ"],
     "COM": ["BANCO DE COMERCIO"],
 }
@@ -59,23 +39,41 @@ def normalize_serie(serie: str | None) -> str | None:
     if not serie:
         return None
 
-    s = serie.upper().strip()
-    s = s.replace(" ", "")
+    s = serie.upper().strip().replace(" ", "")
 
-    replacements = {
-        "TOO": "T00",
-        "TO0": "T00",
-        "TGO0O": "TG00",
-        "TGOO": "TG00",
-        "TGO": "TG0",
-        "EGO": "EG0",
-        "EGOO": "EG00",
-    }
-
-    for old, new in replacements.items():
-        s = s.replace(old, new)
+    # OCR comunes
+    s = s.replace("FO", "F0")
+    s = s.replace("TOO", "T00")
+    s = s.replace("TO0", "T00")
+    s = s.replace("T0O", "T00")
+    s = s.replace("TGO0O", "TG00")
+    s = s.replace("TGOO", "TG00")
+    s = s.replace("TGO", "TG0")
+    s = s.replace("EGO", "EG0")
 
     return s
+
+
+def es_serie_guia_valida(serie: str | None) -> bool:
+    if not serie:
+        return False
+
+    s = normalize_serie(serie)
+
+    invalidas = {
+        "TOTAL", "TASA", "TALM", "TICINO", "GARCIA", "ENE",
+        "CTA", "CARGO", "BANCO", "SOLES", "DOLARES"
+    }
+
+    if s in invalidas:
+        return False
+
+    return bool(
+        re.match(r"^T\d{3,5}$", s)
+        or re.match(r"^TG\d{2,5}$", s)
+        or re.match(r"^EG\d{2,5}$", s)
+        or re.match(r"^T[A-Z]\d{2,5}$", s)
+    )
 
 
 def tiene_cliente_destino(text: str, cliente: str) -> bool:
@@ -86,162 +84,6 @@ def tiene_cliente_destino(text: str, cliente: str) -> bool:
         return False
 
     return data["nombre"] in t and data["ruc"] in t
-
-
-def extract_oc_from_text(text: str) -> str | None:
-    t = norm(text)
-
-    patterns = [
-        r"\bO\s*/\s*C\.?\s*:?\s*0*(\d{3,8})",
-        r"\bO\s*C\s*:?\s*0*(\d{3,8})",
-        r"\bOC\s*:?\s*0*(\d{3,8})",
-        r"\bO/C\s*:?\s*0*(\d{3,8})",
-        r"ORDEN\s+DE\s+COMPRA\s+N?[°º*?:]?\s*0*(\d{3,8})",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            return m.group(1).zfill(6)
-
-    return None
-
-
-def is_pago_detraccion_text(text: str) -> bool:
-    t = norm(text)
-    c = compact_text(t)
-
-    return bool(
-        "SISTEMADEPAGODEOBLIGACIONESTRIBUTARIAS" in c
-        or "DLEG940" in c
-        or "DETRACCION" in t
-        or "DETRACCIONES" in t
-        or "MONTO DEPOSITO" in t
-        or "MONTO DEL DEPOSITO" in t
-        or "NUMERO DE PAGO DE DETRACCIONES" in t
-        or "PAGO DE DETRACCIONES" in t
-        or "N CUENTA DE DETRACCIONES" in t
-        or "CUENTA DE DETRACCIONES" in t
-    )
-
-
-def is_pago_transferencia_text(text: str) -> bool:
-    t = norm(text)
-    c = compact_text(t)
-
-    return bool(
-        "TRANSFERENCIAS" in t
-        or "TRANSFERENCIA INTERBANCARIA" in t
-        or "TRANSFERENCIA A CUENTAS DE TERCEROS" in t
-        or "CONSTANCIA DE OPERACION" in t
-        or "CONSTANCIADEOPERACION" in c
-        or "IMPORTE TRANSFERIDO" in t
-        or "IMPORTE CARGADO" in t
-        or "CUENTA DE CARGO" in t
-        or "CUENTA DE ABONO" in t
-        or "NUMERO DE OPERACION" in t
-        or "CODIGO DE SOLICITUD" in t
-    )
-
-
-def is_nota_ingreso_text(text: str) -> bool:
-    t = norm(text)
-    c = compact_text(t)
-
-    return bool(
-        "NOTADEINGRESO" in c
-        or re.search(r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*\d{3,10}", t, re.I)
-    )
-
-
-def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
-    t = norm(text)
-
-    if not tiene_cliente_destino(t, cliente):
-        return False
-
-    return bool(
-        re.search(
-            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?]?\s*:?\s*\d{3,8}",
-            t,
-            re.I,
-        )
-    )
-
-
-def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
-    t = norm(text)
-
-    if not tiene_cliente_destino(t, cliente):
-        return False
-
-    return bool(
-        re.search(
-            r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*\d{3,8}",
-            t,
-            re.I,
-        )
-    )
-
-
-def is_guia_text(text: str, filename: str = "") -> bool:
-    t = norm(text)
-    c = compact_text(t)
-
-    return bool(
-        "GUIADEREMISION" in c
-        or "GUIA DE REMISION" in t
-        or "GUÍA DE REMISIÓN" in t
-        or "MOTIVO DEL TRASLADO" in t
-        or "DATOS DEL TRANSPORTISTA" in t
-        or "INFORMACION DE BIENES TRASLADADOS" in t
-        or "INFORMACIÓN DE BIENES TRASLADADOS" in t
-        or "DIRECCION DE PARTIDA" in t
-        or "DIRECCIÓN DE PARTIDA" in t
-    )
-
-
-def is_factura_text(text: str, filename: str = "") -> bool:
-    t = norm(text)
-    c = compact_text(t)
-    name = norm(filename)
-
-    return bool(
-        "FACTURAELECTRONICA" in c
-        or "FACTURA ELECTRONICA" in t
-        or "FACTURA ELECTRÓNICA" in t
-        or "REPRESENTACION IMPRESA DE LA FACTURA" in t
-        or "REPRESENTACIÓN IMPRESA DE LA FACTURA" in t
-        or re.search(r"\b(F[A-Z0-9]{2,4})\s*[- ]\s*\d{1,10}\b", t)
-        or re.search(r"\b(F[A-Z0-9]{2,4})\s+\d{1,10}\b", name)
-    )
-
-
-def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
-    t = norm(text)
-
-    if is_pago_detraccion_text(t):
-        return "pago_detraccion"
-
-    if is_pago_transferencia_text(t):
-        return "pago_transferencia"
-
-    if is_nota_ingreso_text(t):
-        return "nota_ingreso"
-
-    if is_orden_servicio_text(t, cliente):
-        return "orden_servicio"
-
-    if is_orden_compra_text(t, cliente):
-        return "orden_compra"
-
-    if is_guia_text(t, archivo_fuente):
-        return "guia_remision"
-
-    if is_factura_text(t, archivo_fuente):
-        return "factura"
-
-    return "otro"
 
 
 def extract_factura_from_filename(filename: str) -> dict:
@@ -276,18 +118,193 @@ def extract_factura_from_filename(filename: str) -> dict:
         "numero": numero,
         "ruc": ruc,
         "razon_social_emisor": razon,
-        "clave": f"FACTURA|{ruc}|{serie}|{numero}" if serie and numero and ruc else None,
+        "clave": f"FACTURA|{ruc}|{serie}|{numero}",
     }
+
+
+def extract_oc_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+DE\s+COMPRA\s+NRO\.?\s*:?\s*0*(\d{3,10})",
+        r"\bO\s*/\s*C\.?\s*:?\s*0*(\d{3,10})",
+        r"\bOC\s*:?\s*0*(\d{3,10})",
+        r"\bORD\.?\s+COMPRA\s*:?\s*0*(\d{3,10})",
+        r"\bORDEN\s+COMPRA\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+
+
+def extract_os_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+DE\s+SERVICIO\s+NRO\.?\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+
+
+def is_pago_detraccion_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "SISTEMADEPAGODEOBLIGACIONESTRIBUTARIAS" in c
+        or "DLEG940" in c
+        or "DETRACCION" in t
+        or "DETRACCIONES" in t
+        or "MONTO DEL DEPOSITO" in t
+        or "MONTO DEPOSITO" in t
+        or "NUMERO DE PAGO DE DETRACCIONES" in t
+        or "PAGO DE DETRACCIONES" in t
+        or "NUMERO DE OPERACION" in t and "NUMERO DE COMPROBANTE" in t and "MONTO" in t
+    )
+
+
+def is_pago_transferencia_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "CONSTANCIADEOPERACION" in c
+        or "CONSTANCIA DE OPERACION" in t
+        or "IMPORTE TRANSFERIDO" in t
+        or "IMPORTE CARGADO" in t
+        or "CUENTA DE CARGO" in t and "CUENTA DE ABONO" in t
+        or "CODIGO DE SOLICITUD" in t
+        or "NUMERO DE OPERACION" in t and ("TRANSFERENCIA" in t or "ABONADA" in t)
+    )
+
+
+def is_nota_ingreso_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "NOTADEINGRESO" in c
+        or re.search(r"NOTA\s+DE\s+INGRESO\D{0,25}(\d{3,10})", t, re.I)
+    )
+
+
+def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
+    t = norm(text)
+
+    if not tiene_cliente_destino(t, cliente):
+        return False
+
+    return extract_oc_from_text(t) is not None
+
+
+def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
+    t = norm(text)
+
+    if not tiene_cliente_destino(t, cliente):
+        return False
+
+    return extract_os_from_text(t) is not None
+
+
+def is_factura_text(text: str, filename: str = "") -> bool:
+    t = norm(text)
+    c = compact_text(t)
+    name = norm(filename)
+
+    return bool(
+        "FACTURAELECTRONICA" in c
+        or "FACTURA ELECTRONICA" in t
+        or "FACTURA ELECTRÓNICA" in t
+        or "REPRESENTACION IMPRESA DE LA FACTURA" in t
+        or "REPRESENTACIÓN IMPRESA DE LA FACTURA" in t
+        or re.search(r"\bF[A-Z0-9]{2,4}\s*[- ]\s*0*\d{1,10}\b", t)
+        or re.search(r"\bF[A-Z0-9]{2,4}\s+\d{1,10}\b", name)
+    )
+
+
+def is_guia_text(text: str, filename: str = "") -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    # Evita que una factura que solo REFERENCIA una guía se vuelva guía.
+    if is_factura_text(t, filename):
+        return False
+
+    return bool(
+        "GUIADEREMISIONREMITENTEELECTRONICA" in c
+        or "GUIA DE REMISION REMITENTE ELECTRONICA" in t
+        or "GUÍA DE REMISIÓN REMITENTE ELECTRÓNICA" in t
+        or "MOTIVO DEL TRASLADO" in t
+        or "DATOS DEL TRANSPORTISTA" in t
+        or "DATOS DEL TRASLADO" in t
+        or "INFORMACION DE BIENES TRASLADADOS" in t
+        or "INFORMACIÓN DE BIENES TRASLADADOS" in t
+        or "DIRECCION DE PARTIDA" in t
+        or "DIRECCIÓN DE PARTIDA" in t
+        or "DIRECCION DE LLEGADA" in t
+        or "DIRECCIÓN DE LLEGADA" in t
+    )
+
+
+def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
+    t = norm(text)
+
+    if is_pago_detraccion_text(t):
+        return "pago_detraccion"
+
+    if is_orden_servicio_text(t, cliente):
+        return "orden_servicio"
+
+    if is_orden_compra_text(t, cliente):
+        return "orden_compra"
+
+    if is_nota_ingreso_text(t):
+        return "nota_ingreso"
+
+    # FACTURA debe ganar sobre "Guía de remisión remitente: XXX"
+    if is_factura_text(t, archivo_fuente):
+        return "factura"
+
+    if is_guia_text(t, archivo_fuente):
+        return "guia_remision"
+
+    if is_pago_transferencia_text(t):
+        return "pago_transferencia"
+
+    return "otro"
 
 
 def extract_factura_from_text(text: str) -> dict:
     t = norm(text)
 
-    serie_num = re.search(r"\b(F[A-Z0-9]{2,4})\s*[- ]\s*0*(\d{1,10})\b", t)
-    ruc = re.search(r"\b(10|20)\d{9}\b", t)
+    patterns = [
+        r"\b(F[A-Z0-9]{2,5})\s*[- ]\s*0*(\d{1,10})\b",
+        r"\b(FO\d{2})\s*[- ]\s*0*(\d{1,10})\b",
+    ]
 
-    serie = normalize_serie(serie_num.group(1)) if serie_num else None
-    numero = serie_num.group(2).lstrip("0") if serie_num else None
+    serie = None
+    numero = None
+
+    for p in patterns:
+        m = re.search(p, t, re.I)
+        if m:
+            serie = normalize_serie(m.group(1))
+            numero = m.group(2).lstrip("0") or "0"
+            break
+
+    ruc = re.search(r"\b(10|20)\d{9}\b", t)
     ruc_val = ruc.group(0) if ruc else None
 
     return {
@@ -298,19 +315,26 @@ def extract_factura_from_text(text: str) -> dict:
     }
 
 
-def extract_guia_fields(text: str, filename: str = "") -> tuple[str | None, str | None]:
+def extract_guia_fields(text: str) -> tuple[str | None, str | None]:
     t = norm(text)
 
     patterns = [
-        r"GUIA\s*(?:DE\s*REMISION)?\s*[:\-]?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
-        r"GUÍA\s*(?:DE\s*REMISIÓN)?\s*[:\-]?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
-        r"\b([TEG][A-Z0-9]{2,5})\s*[- ]\s*0*(\d{1,10})\b",
+        r"GUIA\s+DE\s+REMISION\s+(?:REMITENTE)?\s*[:\-]?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"GUÍA\s+DE\s+REMISIÓN\s+(?:REMITENTE)?\s*[:\-]?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"GUIA\s*[:\-]\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"\b(T\d{3,5}|T[A-Z]\d{2,5}|TG\d{2,5}|EG\d{2,5})\s*[- ]\s*0*(\d{1,10})\b",
     ]
 
     for pattern in patterns:
         m = re.search(pattern, t, re.I)
-        if m:
-            return normalize_serie(m.group(1)), m.group(2).lstrip("0") or "0"
+        if not m:
+            continue
+
+        serie = normalize_serie(m.group(1))
+        numero = m.group(2).lstrip("0") or "0"
+
+        if es_serie_guia_valida(serie):
+            return serie, numero
 
     return None, None
 
@@ -318,18 +342,14 @@ def extract_guia_fields(text: str, filename: str = "") -> tuple[str | None, str 
 def extract_guia(text: str, filename: str = "") -> dict:
     t = norm(text)
 
-    if not is_guia_text(t, filename):
-        return {
-            "serie": None,
-            "numero": None,
-            "ruc": None,
-            "clave": None,
-        }
+    serie, numero = extract_guia_fields(t)
 
-    serie, numero = extract_guia_fields(t, filename)
+    f = extract_factura_from_filename(filename)
+    ruc_val = f.get("ruc")
 
-    ruc = re.search(r"\b(10|20)\d{9}\b", t)
-    ruc_val = ruc.group(0) if ruc else None
+    if not ruc_val:
+        ruc = re.search(r"\b(10|20)\d{9}\b", t)
+        ruc_val = ruc.group(0) if ruc else None
 
     return {
         "serie": serie,
@@ -339,52 +359,32 @@ def extract_guia(text: str, filename: str = "") -> dict:
     }
 
 
-def extract_os(text: str, cliente: str = "BBTEC") -> dict:
-    t = norm(text)
-
-    if not is_orden_servicio_text(t, cliente):
-        return {"numero": None, "clave": None}
-
-    m = re.search(
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?]?\s*:?\s*0*(\d{3,8})",
-        t,
-        re.I,
-    )
-
-    if not m:
-        return {"numero": None, "clave": None}
-
-    numero = m.group(1).zfill(6)
-    return {"numero": numero, "clave": f"OS|{numero}"}
-
-
 def extract_oc(text: str, cliente: str = "BBTEC") -> dict:
-    t = norm(text)
-
-    if not is_orden_compra_text(t, cliente):
-        return {"numero": None, "clave": None}
-
-    numero = extract_oc_from_text(t)
-
+    numero = extract_oc_from_text(text)
     return {
         "numero": numero,
         "clave": f"OC|{numero}" if numero else None,
     }
 
 
+def extract_os(text: str, cliente: str = "BBTEC") -> dict:
+    numero = extract_os_from_text(text)
+    return {
+        "numero": numero,
+        "clave": f"OS|{numero}" if numero else None,
+    }
+
+
 def extract_ni(text: str) -> dict:
     t = norm(text)
 
-    if not is_nota_ingreso_text(t):
-        return {"numero": None, "clave": None}
-
-    patrones = [
-        r"NOTA\s+DE\s+INGRESO\s*(?:N[°º*?])?\s*:?\s*(\d{3,10})\b",
+    patterns = [
+        r"NOTA\s+DE\s+INGRESO\D{0,25}(\d{3,10})",
         r"\bNI\s*[:\-]\s*(\d{3,10})\b",
     ]
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I)
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
         if m:
             numero = m.group(1).zfill(6)
             return {"numero": numero, "clave": f"NI|{numero}"}
@@ -406,7 +406,7 @@ def detect_banco(text: str) -> str | None:
 def extract_codigo_operacion(text: str, banco: str | None = None) -> str | None:
     t = norm(text)
 
-    patrones = [
+    patterns = [
         r"NUMERO\s+DE\s+OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
         r"N[°º]\s*DE\s*OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
         r"CODIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
@@ -414,8 +414,8 @@ def extract_codigo_operacion(text: str, banco: str | None = None) -> str | None:
         r"NUMERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
     ]
 
-    for patron in patrones:
-        m = re.search(patron, t, re.I)
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
         if m:
             return re.sub(r"\s+", "", m.group(1).replace(",", ""))
 
@@ -426,20 +426,15 @@ def extract_pago_transferencia(text: str) -> dict:
     banco = detect_banco(text)
     codigo = extract_codigo_operacion(text, banco)
 
-    clave = None
-    if banco and codigo:
-        clave = f"PAGO_TRANSFERENCIA|{banco}|{codigo}"
-
     return {
         "banco": banco,
         "codigo_operacion": codigo,
-        "clave": clave,
+        "clave": f"PAGO_TRANSFERENCIA|{banco}|{codigo}" if banco and codigo else None,
     }
 
 
 def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
     t = norm(text)
-
     f = extract_factura_from_filename(archivo_fuente)
 
     ruc = f.get("ruc")
@@ -458,15 +453,15 @@ def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
             ruc = m.group(1)
             break
 
-    comp_m = re.search(
+    comp = re.search(
         r"NUMERO\s+DE\s+COMPROBANTE\s*:?\s*([A-Z0-9]{3,6})\s*[- ]?\s*0*(\d{1,10})",
         t,
         re.I,
     )
 
-    if comp_m:
-        serie = normalize_serie(comp_m.group(1))
-        numero = comp_m.group(2).lstrip("0") or "0"
+    if comp:
+        serie = normalize_serie(comp.group(1))
+        numero = comp.group(2).lstrip("0") or "0"
 
     codigo = extract_codigo_operacion(text, "BN")
 
@@ -489,6 +484,7 @@ def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
 def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
     tipo = detect_tipo(text, archivo_fuente, cliente)
     oc_num = extract_oc_from_text(text)
+    os_num = extract_os_from_text(text)
 
     data = {
         "tipo": tipo,
@@ -496,7 +492,7 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
         "numero": None,
         "ruc": None,
         "razon_social_emisor": None,
-        "orden_servicio": None,
+        "orden_servicio": os_num,
         "orden_compra": oc_num,
         "clave_documental": None,
         "banco": None,
@@ -520,7 +516,6 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "numero": f["numero"],
             "ruc": f["ruc"],
             "razon_social_emisor": f["razon_social_emisor"],
-            "orden_compra": oc_num,
             "clave_documental": f["clave"],
         })
 
@@ -530,8 +525,14 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "serie": g["serie"],
             "numero": g["numero"],
             "ruc": g["ruc"],
-            "orden_compra": oc_num,
             "clave_documental": g["clave"],
+        })
+
+    elif tipo == "orden_compra":
+        oc = extract_oc(text, cliente)
+        data.update({
+            "orden_compra": oc["numero"],
+            "clave_documental": oc["clave"],
         })
 
     elif tipo == "orden_servicio":
@@ -539,13 +540,6 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
         data.update({
             "orden_servicio": os_data["numero"],
             "clave_documental": os_data["clave"],
-        })
-
-    elif tipo == "orden_compra":
-        oc_data = extract_oc(text, cliente)
-        data.update({
-            "orden_compra": oc_data["numero"],
-            "clave_documental": oc_data["clave"],
         })
 
     elif tipo == "nota_ingreso":

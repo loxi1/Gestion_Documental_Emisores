@@ -35,14 +35,19 @@ def aplicar_qr_a_data(parsed: dict) -> dict:
 
 
 def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT *
             FROM documentos_paginas
             WHERE requiere_qr = TRUE
-              AND qr_procesado = FALSE
+            AND qr_procesado = FALSE
+            AND cliente_abreviatura = %s
+            AND anio = %s
+            AND mes = %s
             ORDER BY archivo_fuente, pagina
-        """)
+        """, (cliente, year, month))
         rows = cur.fetchall()
 
     print(f"Páginas pendientes QR: {len(rows)}")

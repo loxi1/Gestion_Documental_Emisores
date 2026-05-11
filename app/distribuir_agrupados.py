@@ -95,14 +95,16 @@ def obtener_razones(cliente: str, year: int, month: int):
 def obtener_control_por_asiento(cliente: str, year: int, month: int):
     with get_cursor() as (_, cur):
         cur.execute("""
-            SELECT asiento_contable, tipo_detectado, orden_compra, orden_servicio, pagina
+            SELECT asiento_contable, orden_compra, orden_servicio, pagina
             FROM documentos_paginas
             WHERE estado = 'clasificado'
-              AND clave_documental IS NOT NULL
-              AND tipo_detectado IN ('orden_compra', 'orden_servicio')
               AND cliente_abreviatura = %s
               AND anio = %s
               AND mes = %s
+              AND (
+                    orden_compra IS NOT NULL
+                    OR orden_servicio IS NOT NULL
+                  )
             ORDER BY asiento_contable, pagina
         """, (cliente, year, month))
 
@@ -114,10 +116,10 @@ def obtener_control_por_asiento(cliente: str, year: int, month: int):
             if asiento in controles:
                 continue
 
-            if row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
+            if row["orden_compra"]:
                 controles[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
 
-            elif row["tipo_detectado"] == "orden_servicio" and row["orden_servicio"]:
+            elif row["orden_servicio"]:
                 controles[asiento] = ("OS", str(row["orden_servicio"]).zfill(6))
 
         return controles
