@@ -53,6 +53,8 @@ def process(year: int, cliente: str, month: int):
                     qr_procesado = FALSE,
                     qr_raw = NULL,
                     qr_error = NULL,
+                    banco_abreviatura = %s,
+                    codigo_operacion = %s,
                     estado = 'clasificado'
                 WHERE id = %s
             """, (
@@ -65,6 +67,8 @@ def process(year: int, cliente: str, month: int):
                 data["orden_compra"],
                 data["clave_documental"],
                 requiere_qr,
+                data.get("banco"),
+                data.get("codigo_operacion"),
                 row["id"],
             ))
 
