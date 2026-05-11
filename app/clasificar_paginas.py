@@ -10,8 +10,11 @@ def process(year: int, cliente: str, month: int):
             SELECT *
             FROM documentos_paginas
             WHERE estado = 'separado'
+            AND cliente_abreviatura = %s
+            AND anio = %s
+            AND mes = %s
             ORDER BY archivo_fuente, pagina
-        """)
+        """, (cliente, year, month))
         rows = cur.fetchall()
 
     print(f"Páginas a clasificar: {len(rows)}")

@@ -25,6 +25,28 @@ def parse_clave(clave: str) -> dict:
     if parts[0] == "NI":
         return {"tipo": "NOTA_INGRESO", "numero": parts[1]}
 
+    if parts[0] == "PAGO_TRANSFERENCIA":
+        return {
+            "tipo": "PAGO_TRANSFERENCIA",
+            "banco": parts[1] if len(parts) > 1 else "SIN_BANCO",
+            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
+        }
+
+    if parts[0] == "PAGO_DETRACCION":
+        if len(parts) >= 4:
+            return {
+                "tipo": "PAGO_DETRACCION",
+                "ruc": parts[1],
+                "serie": parts[2],
+                "numero": parts[3],
+            }
+
+        return {
+            "tipo": "PAGO_DETRACCION",
+            "banco": parts[1] if len(parts) > 1 else "BN",
+            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
+        }
+
     return {"tipo": "OTRO"}
 
 
@@ -33,9 +55,8 @@ def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) ->
     p_ini = min(paginas)
     p_fin = max(paginas)
     rango = f"P{p_ini:03d}-P{p_fin:03d}"
-    tipo = data["tipo"]
-
     sufijo_bloque = f" B{bloque:02d}" if bloque > 1 else ""
+    tipo = data["tipo"]
 
     if tipo in ("FACTURA", "GUIA_REMISION"):
         return f"{asiento} {tipo} {data['serie']} {data['numero']} {data['ruc']} {rango}{sufijo_bloque}.pdf"
@@ -43,23 +64,28 @@ def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) ->
     if tipo in ("OC", "OS", "NOTA_INGRESO"):
         return f"{asiento} {tipo} {data['numero']} {rango}{sufijo_bloque}.pdf"
 
+    if tipo == "PAGO_TRANSFERENCIA":
+        return f"{asiento} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']} {rango}{sufijo_bloque}.pdf"
+
+    if tipo == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{asiento} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']} {rango}{sufijo_bloque}.pdf"
+        return f"{asiento} PAGO_DETRACCION {data['banco']} {data['codigo']} {rango}{sufijo_bloque}.pdf"
+
     return f"{asiento} OTRO {rango}{sufijo_bloque}.pdf"
 
 
 def crear_pdf(paginas: list[dict], output_pdf: Path):
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-
     doc_out = fitz.open()
 
     for row in paginas:
         ruta = row["ruta_pagina_pdf"]
-
         if not ruta:
             print(f"[SIN RUTA] ID {row['id']} {row['archivo_fuente']} P{row['pagina']}")
             continue
 
         page_pdf = Path(ruta)
-
         if not page_pdf.exists():
             print(f"[NO EXISTE] {page_pdf}")
             continue
@@ -84,10 +110,7 @@ def construir_bloques(rows: list[dict]):
         asiento = row["asiento_contable"]
         clave = row["clave_documental"]
 
-        cambio = (
-            asiento != asiento_actual
-            or clave != clave_actual
-        )
+        cambio = asiento != asiento_actual or clave != clave_actual
 
         if cambio and bloque_actual:
             bloques.append(bloque_actual)
@@ -113,6 +136,7 @@ def construir_bloques(rows: list[dict]):
 
 
 def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
     salida = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "provisional"
     salida.mkdir(parents=True, exist_ok=True)
 
@@ -122,8 +146,11 @@ def procesar(year: int, cliente: str, month: int):
             FROM documentos_paginas
             WHERE estado = 'clasificado'
               AND clave_documental IS NOT NULL
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
             ORDER BY asiento_contable, pagina
-        """)
+        """, (cliente, year, month))
         rows = cur.fetchall()
 
     bloques = construir_bloques(rows)
@@ -141,6 +168,8 @@ def procesar(year: int, cliente: str, month: int):
         crear_pdf(paginas_ordenadas, output_pdf)
 
         if output_pdf.exists():
+            data = parse_clave(clave)
+
             with get_cursor(commit=True) as (_, cur):
                 cur.execute("""
                     INSERT INTO documentos_agrupados (
@@ -160,7 +189,7 @@ def procesar(year: int, cliente: str, month: int):
                 """, (
                     asiento,
                     clave,
-                    parse_clave(clave)["tipo"],
+                    data["tipo"],
                     filename,
                     str(output_pdf),
                     ",".join(str(p) for p in nums_paginas),
@@ -180,6 +209,6 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
-
     args = parser.parse_args()
+
     procesar(args.year, args.cliente, args.month)

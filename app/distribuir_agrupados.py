@@ -57,10 +57,27 @@ def parse_clave(clave: str) -> dict:
     if p[0] == "NI":
         return {"tipo": "NOTA_INGRESO", "numero": p[1]}
 
+    if p[0] == "PAGO_TRANSFERENCIA":
+        return {
+            "tipo": "PAGO_TRANSFERENCIA",
+            "banco": p[1] if len(p) > 1 else "SIN_BANCO",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
+    if p[0] == "PAGO_DETRACCION":
+        if len(p) >= 4:
+            return {"tipo": "PAGO_DETRACCION", "ruc": p[1], "serie": p[2], "numero": p[3]}
+
+        return {
+            "tipo": "PAGO_DETRACCION",
+            "banco": p[1] if len(p) > 1 else "BN",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
     return {"tipo": "OTRO"}
 
 
-def obtener_razones():
+def obtener_razones(cliente: str, year: int, month: int):
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT DISTINCT ruc_emisor, razon_social_emisor
@@ -68,11 +85,14 @@ def obtener_razones():
             WHERE ruc_emisor IS NOT NULL
               AND razon_social_emisor IS NOT NULL
               AND razon_social_emisor <> ''
-        """)
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
         return {row["ruc_emisor"]: row["razon_social_emisor"] for row in cur.fetchall()}
 
 
-def obtener_control_por_asiento():
+def obtener_control_por_asiento(cliente: str, year: int, month: int):
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT asiento_contable, tipo_detectado, orden_compra, orden_servicio, pagina
@@ -80,8 +100,11 @@ def obtener_control_por_asiento():
             WHERE estado = 'clasificado'
               AND clave_documental IS NOT NULL
               AND tipo_detectado IN ('orden_compra', 'orden_servicio')
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
             ORDER BY asiento_contable, pagina
-        """)
+        """, (cliente, year, month))
 
         controles = {}
 
@@ -121,6 +144,14 @@ def nombre_con_oc(cliente: str, control_tipo: str, control_num: str, clave: str,
     if data["tipo"] == "NOTA_INGRESO":
         return f"{prefix} NOTA_INGRESO {data['numero']}.pdf"
 
+    if data["tipo"] == "PAGO_TRANSFERENCIA":
+        return f"{prefix} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']}.pdf"
+
+    if data["tipo"] == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{prefix} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
+        return f"{prefix} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+
     return f"{prefix} SOPORTE.pdf"
 
 
@@ -138,10 +169,19 @@ def nombre_sin_oc(cliente: str, asiento: str, clave: str, razones: dict) -> str:
     if data["tipo"] == "NOTA_INGRESO":
         return f"{asiento} {cliente} NOTA_INGRESO {data['numero']}.pdf"
 
+    if data["tipo"] == "PAGO_TRANSFERENCIA":
+        return f"{asiento} {cliente} PAGO_TRANSFERENCIA {data['banco']} {data['codigo']}.pdf"
+
+    if data["tipo"] == "PAGO_DETRACCION":
+        if "serie" in data:
+            return f"{asiento} {cliente} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
+        return f"{asiento} {cliente} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+
     return f"{asiento} {cliente} SOPORTE.pdf"
 
 
 def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
     base_mes = BASE_SALIDA / str(year) / cliente / f"{month:02d}"
     dir_con_oc = base_mes / "con_oc"
     dir_sin_oc = base_mes / "sin_oc"
@@ -151,8 +191,8 @@ def procesar(year: int, cliente: str, month: int):
     dir_sin_oc.mkdir(parents=True, exist_ok=True)
     dir_revision.mkdir(parents=True, exist_ok=True)
 
-    controles = obtener_control_por_asiento()
-    razones = obtener_razones()
+    controles = obtener_control_por_asiento(cliente, year, month)
+    razones = obtener_razones(cliente, year, month)
 
     with get_cursor() as (_, cur):
         cur.execute("""
