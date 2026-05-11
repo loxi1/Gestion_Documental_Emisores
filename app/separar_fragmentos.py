@@ -47,6 +47,7 @@ def is_reverso_page(text: str) -> bool:
 def process(year: int, cliente: str, month: int):
     pendientes = BASE_TRABAJO / str(year) / cliente / f"{month:02d}" / "pendientes"
     pdfs = sorted(pendientes.glob("*.pdf"))
+    tmp_dir = Path("storage/tmp/pages") / str(year) / cliente / f"{month:02d}"
 
     print(f"Pendientes: {pendientes}")
     print(f"PDF encontrados: {len(pdfs)}")
@@ -60,8 +61,8 @@ def process(year: int, cliente: str, month: int):
         print(f"\n[PDF] {pdf.name} ({total_pages} páginas)")
 
         for idx in range(total_pages):
-            page_pdf = TMP_DIR / f"{pdf.stem}_P{idx + 1}.pdf"
-            page_ocr = TMP_DIR / f"{pdf.stem}_P{idx + 1}_OCR.pdf"
+            page_pdf = tmp_dir / f"{pdf.stem}_P{idx + 1}.pdf"
+            page_ocr = tmp_dir / f"{pdf.stem}_P{idx + 1}_OCR.pdf"
             ruta_pagina_pdf = str(page_pdf)
 
             split_page(pdf, idx, page_pdf)
@@ -83,6 +84,9 @@ def process(year: int, cliente: str, month: int):
             with get_cursor(commit=True) as (_, cur):
                 cur.execute("""
                     INSERT INTO documentos_paginas (
+                        cliente_abreviatura,
+                        anio,
+                        mes,
                         asiento_contable,
                         archivo_fuente,
                         pagina,
@@ -93,7 +97,7 @@ def process(year: int, cliente: str, month: int):
                         es_reverso,
                         estado
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'separado')
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'separado')
                     ON CONFLICT (archivo_fuente, pagina) DO UPDATE
                     SET tipo_detectado = EXCLUDED.tipo_detectado,
                         texto_extraido = EXCLUDED.texto_extraido,
@@ -102,6 +106,9 @@ def process(year: int, cliente: str, month: int):
                         es_reverso = EXCLUDED.es_reverso,
                         estado = 'separado'
                 """, (
+                    cliente,
+                    year,
+                    month,
                     asiento,
                     pdf.name,
                     idx + 1,

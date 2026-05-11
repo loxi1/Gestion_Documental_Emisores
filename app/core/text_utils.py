@@ -17,17 +17,13 @@ def collapse_spaces(value: str | None) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def normalize_text(value: str | None) -> str:
-    text = strip_accents(value)
+def normalize_text(text: str) -> str:
+    text = text or ""
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
     text = text.upper()
-    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-
-    text = re.sub(r"\bN[°º]\b", "NRO", text)
-    text = re.sub(r"\bNRO\.\b", "NRO", text)
-    text = re.sub(r"\bNO\.\b", "NRO", text)
-
-    text = collapse_spaces(text)
-    return text
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def normalize_filename_part(value: str | None, fallback: str = "SIN_DATO") -> str:
@@ -41,3 +37,7 @@ def normalize_filename_part(value: str | None, fallback: str = "SIN_DATO") -> st
     text = text.replace(" ", "_")
     text = text.strip("_-")
     return text or fallback
+
+def compact_text(text: str) -> str:
+    text = normalize_text(text)
+    return re.sub(r"[^A-Z0-9]", "", text)
