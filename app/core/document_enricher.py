@@ -127,11 +127,10 @@ def extract_oc_from_text(text: str) -> str | None:
 
     patterns = [
         r"ORDEN\s+DE\s+COMPRA\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
-        r"ORDEN\s+DE\s+COMPRA\s+NRO\.?\s*:?\s*0*(\d{3,10})",
+        r"\bN[°º*?:]?\s*OC\s*:?\s*0*(\d{3,10})",
         r"\bO\s*/\s*C\.?\s*:?\s*0*(\d{3,10})",
         r"\bOC\s*:?\s*0*(\d{3,10})",
         r"\bORD\.?\s+COMPRA\s*:?\s*0*(\d{3,10})",
-        r"\bORDEN\s+COMPRA\s*:?\s*0*(\d{3,10})",
     ]
 
     for pattern in patterns:
@@ -147,7 +146,7 @@ def extract_os_from_text(text: str) -> str | None:
 
     patterns = [
         r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
-        r"ORDEN\s+DE\s+SERVICIO\s+NRO\.?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+DE\s+SERVICIO.*?N[°º*?:]?\s*:?\s*0*(\d{3,10})",
     ]
 
     for pattern in patterns:
@@ -208,7 +207,13 @@ def is_orden_compra_text(text: str, cliente: str = "BBTEC") -> bool:
     if not tiene_cliente_destino(t, cliente):
         return False
 
-    return extract_oc_from_text(t) is not None
+    return bool(
+        re.search(
+            r"ORDEN\s+DE\s+COMPRA\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
+            t,
+            re.I,
+        )
+    )
 
 
 def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
@@ -262,6 +267,12 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     if is_documento_extranjero_o_proforma(t):
         return "otro"
 
+    if is_guia_text(t, archivo_fuente):
+        return "guia_remision"
+
+    if is_factura_text(t, archivo_fuente):
+        return "factura"
+
     if is_orden_servicio_text(t, cliente):
         return "orden_servicio"
 
@@ -270,12 +281,6 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
 
     if is_nota_ingreso_text(t):
         return "nota_ingreso"
-
-    if is_factura_text(t, archivo_fuente):
-        return "factura"
-
-    if is_guia_text(t, archivo_fuente):
-        return "guia_remision"
 
     if is_pago_detraccion_text(t):
         return "pago_detraccion"
@@ -584,4 +589,18 @@ def is_documento_extranjero_o_proforma(text: str) -> bool:
         or "BANK DETAILS" in t
         or "SHENZHEN" in t
         or "INDUSTRIAL AND COMMERCIAL BANK OF CHINA" in t
+    )
+
+
+def is_documento_extranjero_o_proforma(text: str) -> bool:
+    t = norm(text)
+
+    return bool(
+        "PROFORMA" in t
+        or "PROFORMA INVOICE" in t
+        or "QUOTATION" in t
+        or "COMMERCIAL INVOICE" in t
+        or "PAYMENT TERM" in t
+        or "BANK DETAILS" in t
+        or "SHENZHEN" in t
     )

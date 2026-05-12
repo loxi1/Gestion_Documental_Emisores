@@ -43,6 +43,13 @@ def process(year: int, cliente: str, month: int):
             f"{data['tipo']} clave={data['clave_documental']}"
         )
 
+        nuevo_estado = "clasificado"
+
+        if data["tipo"] == "otro":
+            texto = (row["texto_extraido"] or "").strip()
+            if len(texto) > 30:
+                nuevo_estado = "revision_manual"
+
         with get_cursor(commit=True) as (_, cur):
             cur.execute("""
                 UPDATE documentos_paginas
@@ -60,7 +67,7 @@ def process(year: int, cliente: str, month: int):
                     qr_error = NULL,
                     banco_abreviatura = %s,
                     codigo_operacion = %s,
-                    estado = 'clasificado'
+                    estado = %s
                 WHERE id = %s
             """, (
                 data["tipo"],
@@ -74,6 +81,7 @@ def process(year: int, cliente: str, month: int):
                 requiere_qr,
                 data.get("banco"),
                 data.get("codigo_operacion"),
+                nuevo_estado,
                 row["id"],
             ))
 
