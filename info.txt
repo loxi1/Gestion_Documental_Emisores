@@ -1,31 +1,14 @@
-Validé el archivo pegado. Está casi bien, pero todavía le falta el ajuste principal para OS.
-Ahora mismo tu enrich_page() hace esto:
-Python
-tipo = detect_tipo(...)
-oc_num = extract_oc_from_text(...)
-os_num = extract_os_from_text(...)
-pero no corrige tipo cuando os_num existe. Por eso te pasa esto:
-Plain text
-tipo_detectado = otro
-orden_servicio = 000223
-clave_documental = NULL
-El snippet actual muestra que orden_servicio sí se llena, pero tipo queda como venía de detect_tipo. �
-Código pegado: py
-Corrige solo enrich_page()
-Reemplaza el inicio por esto:
+Sí revisé el repo: en GitHub sí existe parse_qr_payload() dentro de app/core/qr_parser.py. �
+Entonces tu error significa que tu archivo local app/core/qr_parser.py no está igual al repo o quedó incompleto.
+GitHub
+Reemplaza tu app/core/qr_parser.py por este:
 Python
 
-Y confirma que tengas esto:
-Python
-elif tipo == "orden_servicio":
-    os_data = extract_os(text, cliente)
-    data.update({
-        "orden_servicio": os_data["numero"],
-        "clave_documental": os_data["clave"],
-    })
-Resultado esperado
-Después de reclasificar:
-Plain text
-04-0060 P2 -> orden_servicio clave=OS|000223
-04-0194 P2 -> orden_servicio clave=OS|000221
-Eso es lo que falta.
+Luego prueba rápido:
+Bash
+python -c "from app.core.qr_parser import parse_qr_payload; print(parse_qr_payload('20518202406|09|T002|218283|0|2026-01-10|6|20299922821'))"
+Si estás parado dentro del proyecto y usas imports como from core..., usa:
+Bash
+python -c "from core.qr_parser import parse_qr_payload; print(parse_qr_payload('20518202406|09|T002|218283|0|2026-01-10|6|20299922821'))"
+Además, tu procesar_qr_pendientes.py del repo todavía importa decode_qr_from_pdf desde core.qr_reader, no el nuevo qr_utils. �
+GitHub
