@@ -97,7 +97,7 @@ def build_variants(img: np.ndarray):
     yield "adaptive", adaptive_threshold(gray)
     yield "sharpen", sharpen(gray)
 
-    for scale in (2, 3, 4):
+    for scale in (2, 3):
         up = resize_image(gray, scale)
         yield f"resize_x{scale}", up
         yield f"resize_x{scale}_otsu", threshold_otsu(up)

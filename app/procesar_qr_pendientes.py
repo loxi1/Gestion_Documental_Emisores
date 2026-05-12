@@ -45,7 +45,7 @@ def resolver_ruta_pagina(row: dict, year: int, cliente: str, month: int) -> Path
     return Path("storage") / "tmp" / "pages" / str(year) / cliente / f"{month:02d}" / f"{nombre}_P{pagina}.pdf"
 
 
-def procesar(year: int, cliente: str, month: int):
+def procesar(year: int, cliente: str, month: int, debug: bool = False):
     cliente = cliente.upper()
 
     with get_cursor() as (_, cur):
@@ -63,7 +63,17 @@ def procesar(year: int, cliente: str, month: int):
 
     print(f"Páginas pendientes QR: {len(rows)}")
 
-    debug_dir = Path("storage") / "tmp" / "qr_debug" / str(year) / cliente / f"{month:02d}"
+    debug_dir = None
+
+    if debug:
+        debug_dir = (
+            Path("storage")
+            / "tmp"
+            / "qr_debug"
+            / str(year)
+            / cliente
+            / f"{month:02d}"
+        )
 
     for row in rows:
         pdf_path = resolver_ruta_pagina(row, year, cliente, month)
@@ -86,8 +96,9 @@ def procesar(year: int, cliente: str, month: int):
         qr_candidates = decode_qr_from_pdf_pro(
             pdf_path,
             max_pages=1,
-            dpi=420,
+            dpi=320,
             debug_dir=debug_dir,
+            debug=debug,
         )
 
         if not qr_candidates:
@@ -167,6 +178,12 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    procesar(args.year, args.cliente, args.month)
+    procesar(
+        year=args.year,
+        cliente=args.cliente,
+        month=args.month,
+        debug=args.debug,
+    )

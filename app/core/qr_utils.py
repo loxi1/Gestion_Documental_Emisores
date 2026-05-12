@@ -39,10 +39,11 @@ def decode_qr_from_image(img: np.ndarray) -> list[str]:
 
 
 def decode_qr_from_pdf_pro(
-    pdf_path: str | Path,
-    max_pages: int = 1,
-    dpi: int = 420,
-    debug_dir: str | Path | None = None,
+    pdf_path,
+    max_pages=1,
+    dpi=320,
+    debug_dir=None,
+    debug=False,
 ) -> list[str]:
     path = Path(pdf_path)
 
@@ -50,7 +51,7 @@ def decode_qr_from_pdf_pro(
         return []
 
     debug_path = Path(debug_dir) if debug_dir else None
-    if debug_path:
+    if debug and debug_path:
         debug_path.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -70,14 +71,42 @@ def decode_qr_from_pdf_pro(
         img_rgb = np.array(page)
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
-        for zone_name, zone in iter_zones(img_bgr):
-            for angle in (0, 90, 180, 270):
+        zones = list(iter_zones(img_bgr))
+
+        if not debug:
+            zones = [
+                item for item in zones
+                if item[0] in (
+                    "full",
+                    "bottom_left",
+                    "bottom_right",
+                    "bottom",
+                )
+            ]
+
+        angles = (0, 90, 180, 270) if debug else (0,)
+
+        for zone_name, zone in zones:
+            for angle in angles:
                 rotated = rotate_image(zone, angle)
 
-                for variant_name, variant in build_variants(rotated):
+                variants = list(build_variants(rotated))
+
+                if not debug:
+                    variants = [
+                        item for item in variants
+                        if item[0] in (
+                            "gray",
+                            "otsu",
+                            "resize_x2",
+                            "resize_x2_otsu",
+                        )
+                    ]
+
+                for variant_name, variant in variants:
                     decoded = decode_qr_from_image(variant)
 
-                    if debug_path and not decoded:
+                    if debug and debug_path and not decoded:
                         filename = (
                             f"{path.stem}_p{page_index}_"
                             f"{zone_name}_{angle}_{variant_name}.png"
@@ -87,5 +116,8 @@ def decode_qr_from_pdf_pro(
                     for item in decoded:
                         if item not in results:
                             results.append(item)
+
+                    if results and not debug:
+                        return results
 
     return results
