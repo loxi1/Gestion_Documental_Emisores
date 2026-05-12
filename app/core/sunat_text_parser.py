@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import re
 
+VALID_SERIES_PREFIXES = (
+    "T",
+    "TG",
+    "EG",
+)
 
 def norm_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").upper()).strip()
@@ -80,7 +85,11 @@ def extract_guia_serie_numero(text: str | None) -> tuple[str | None, str | None]
         serie = normalize_serie_guia(m.group(1))
         numero = m.group(2).lstrip("0") or "0"
 
-        if serie and numero:
+        if (
+            serie
+            and numero
+            and is_valid_guia_serie(serie)
+        ):
             return serie, numero
 
     return None, None
@@ -103,3 +112,21 @@ def parse_sunat_guia_from_text(text: str | None) -> dict | None:
         "ruc_emisor": ruc,
         "clave_documental": f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}",
     }
+
+
+def is_valid_guia_serie(serie: str | None) -> bool:
+    if not serie:
+        return False
+
+    s = serie.upper().strip()
+
+    if len(s) < 3:
+        return False
+
+    if not any(s.startswith(p) for p in VALID_SERIES_PREFIXES):
+        return False
+
+    if not re.match(r"^[A-Z0-9]+$", s):
+        return False
+
+    return True

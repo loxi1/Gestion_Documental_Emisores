@@ -3,6 +3,7 @@ from pathlib import Path
 from slugify import slugify
 
 from core.text_utils import compact_text
+from core.sunat_text_parser import parse_sunat_guia_from_text
 
 
 CLIENTES_DESTINO = {
