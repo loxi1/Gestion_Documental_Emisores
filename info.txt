@@ -1,75 +1,203 @@
-Sí, tienes razón: 04-0029 P2 no tiene QR visible, solo dice “Para consultar…” abajo; por eso no debe gastar 3 minutos intentando leer QR. �
-04-0029 F001 670 20602867227 MAX CENTER E.I.R.L._P2.pdf
-En cambio otros sí tienen QR visible, por ejemplo 04-0037 P2, 04-0062 P3, 04-0068 P3, 04-0071 P3, 04-0073 P3, 04-0205 P1, 04-0211 P4, 04-0217 P4. � � � � � � � �
-04-0037 F001 909 20565747356 BBTI S.A.C._P2.pdf
-04-0062 F001 56458 20519022461 CONSORCIO ELECTRICO INDUSTRIAL S.A._P3.pdf
-04-0068 F001 12825 20508312998 PROVEEDOR INDUSTRIAL FERRETERO S.A._P3.pdf
-04-0071 F004 1312 20614327201 PROVEEDOR DE EPPS S.A.C._P3.pdf
-04-0073 FM48 13050 20511914125 SOLTRAK S.A._P3.pdf
-04-0205 F103 29118 20101484212 REFRIGERACION RENZO S A_P1.pdf
-04-0211 FE01 57500 20508179031 CONTROL Y TECNOLOGIA S.A.C._P4.pdf
-04-0217 F001 3254 20606289660 BREXTON CAPITAL S.A.C._P4.pdf
-Cambio recomendado
-El QR PRO debe tener 2 modos:
-Bash
-# rápido, sin debug, pocas variantes
-python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
-
-# profundo, solo para revisar casos difíciles
-python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1 --debug
-En app/core/qr_utils.py
-Cambia la función decode_qr_from_pdf_pro() para que reciba debug=False:
+Perfecto. Agrega este archivo nuevo.
+1. app/core/sunat_text_parser.py
 Python
-def decode_qr_from_pdf_pro(
-    pdf_path,
-    max_pages=1,
-    dpi=320,
-    debug_dir=None,
-    debug=False,
-):
-Dentro cambia los loops así:
-Python
-zones = list(iter_zones(img_bgr))
+from __future__ import annotations
 
-if not debug:
-    zones = [
-        item for item in zones
-        if item[0] in ("full", "bottom_left", "bottom_right", "bottom")
+import re
+
+
+def norm_text(text: str | None) -> str:
+    return re.sub(r"\s+", " ", (text or "").upper()).strip()
+
+
+def normalize_serie_guia(serie: str | None) -> str | None:
+    if not serie:
+        return None
+
+    s = serie.upper().strip().replace(" ", "")
+
+    replacements = {
+        "TGO0O": "TG00",
+        "TGOO": "TG00",
+        "TGO": "TG0",
+        "TOO": "T00",
+        "TO0": "T00",
+        "T0O": "T00",
+        "EGO": "EG0",
+        "EGOO": "EG00",
+    }
+
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+
+    return s
+
+
+def is_sunat_guia_text(text: str | None) -> bool:
+    t = norm_text(text)
+
+    return bool(
+        "GUIA DE REMISION ELECTRONICA" in t
+        or "GUÍA DE REMISIÓN ELECTRÓNICA" in t
+        or "GUIA DE REMISION REMITENTE" in t
+        or "GUÍA DE REMISIÓN REMITENTE" in t
+        or "GUÍA REMITENTE ELECTRÓNICA" in t
+        or "GUIA REMITENTE ELECTRONICA" in t
+    )
+
+
+def extract_ruc_emisor(text: str | None) -> str | None:
+    t = norm_text(text)
+
+    patterns = [
+        r"RUC\s*N?[°º*]?\s*:?\s*((10|20)\d{9})",
+        r"R\.?U\.?C\.?\s*:?\s*((10|20)\d{9})",
+        r"\b((10|20)\d{9})\b",
     ]
 
-angles = (0, 90, 180, 270) if debug else (0,)
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1)
 
-for zone_name, zone in zones:
-    for angle in angles:
-        rotated = rotate_image(zone, angle)
+    return None
 
-        variants = list(build_variants(rotated))
 
-        if not debug:
-            variants = [
-                item for item in variants
-                if item[0] in ("gray", "resize_x2", "resize_x2_otsu")
-            ]
+def extract_guia_serie_numero(text: str | None) -> tuple[str | None, str | None]:
+    t = norm_text(text)
 
-        for variant_name, variant in variants:
-            decoded = decode_qr_from_image(variant)
-Y el guardado debug debe quedar así:
+    patterns = [
+        r"N[°º*]?\s*:?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"GUIA\s+DE\s+REMISION.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"GUÍA\s+DE\s+REMISIÓN.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"GUIA\s+REMITENTE.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
+        r"\b(TG\d{2,5}|EG\d{2,5}|T\d{3,5})\s*[- ]\s*0*(\d{1,10})\b",
+        r"\b(TGO0O\d?|TGOO\d?|TGO\d?|EGO\d?|TOO\d?|TO0\d?)\s*[- ]?\s*0*(\d{1,10})\b",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if not m:
+            continue
+
+        serie = normalize_serie_guia(m.group(1))
+        numero = m.group(2).lstrip("0") or "0"
+
+        if serie and numero:
+            return serie, numero
+
+    return None, None
+
+
+def parse_sunat_guia_from_text(text: str | None) -> dict | None:
+    if not is_sunat_guia_text(text):
+        return None
+
+    serie, numero = extract_guia_serie_numero(text)
+    ruc = extract_ruc_emisor(text)
+
+    if not serie or not numero:
+        return None
+
+    return {
+        "tipo_documental": "guia_remision",
+        "serie": serie,
+        "numero": numero,
+        "ruc_emisor": ruc,
+        "clave_documental": f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}",
+    }
+2. Cambio en app/core/document_enricher.py
+Agrega arriba:
 Python
-if debug and debug_path and not decoded:
-    filename = f"{path.stem}_p{page_index}_{zone_name}_{angle}_{variant_name}.png"
-    cv2.imwrite(str(debug_path / filename), variant)
-En procesar_qr_pendientes.py
-Cambia la llamada:
+from core.sunat_text_parser import parse_sunat_guia_from_text
+Dentro de enrich_page(), en el bloque:
 Python
-qr_candidates = decode_qr_from_pdf_pro(
-    pdf_path,
-    max_pages=1,
-    dpi=320,
-    debug_dir=debug_dir,
-    debug=debug,
-)
-Resultado
-04-0029 P2 fallará rápido.
-Los que sí tienen QR intentará leerlos.
---debug solo lo usas para 2 o 3 casos difíciles, no para los 22.
-Para 04-0029 P2, mándalo directo a revisión manual QR o completa manualmente la guía si ves serie/número en la página completa.
+elif tipo == "guia_remision":
+reemplázalo por este:
+Python
+elif tipo == "guia_remision":
+    sunat_guia = parse_sunat_guia_from_text(text)
+
+    if sunat_guia:
+        data.update({
+            "serie": sunat_guia["serie"],
+            "numero": sunat_guia["numero"],
+            "ruc": sunat_guia["ruc_emisor"],
+            "clave_documental": sunat_guia["clave_documental"],
+        })
+    else:
+        g = extract_guia(text, archivo_fuente)
+        data.update({
+            "serie": g["serie"],
+            "numero": g["numero"],
+            "ruc": g["ruc"],
+            "clave_documental": g["clave"],
+        })
+Con esto guías SUNAT como:
+Plain text
+N° T001 - 00000226
+N° EG07 - 00000972
+N° TG01 - 00029155
+ya no irán a QR.
+3. Cambio en app/procesar_qr_pendientes.py
+Dentro de:
+Python
+for raw in qr_candidates:
+pon esto al inicio:
+Python
+print(f"  RAW QR -> {raw}")
+
+if raw.startswith("http"):
+    if "e-factura.sunat.gob.pe" in raw and "descargaqr" in raw:
+        with get_cursor(commit=True) as (_, cur):
+            cur.execute("""
+                UPDATE documentos_paginas
+                SET qr_raw = %s,
+                    qr_procesado = TRUE,
+                    qr_error = 'QR SUNAT URL sin datos directos',
+                    estado = 'revision_manual_qr'
+                WHERE id = %s
+            """, (raw, row["id"]))
+
+        aplicado = True
+        print("  QR SUNAT URL guardado; usar texto/OCR o revisión manual")
+        break
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_paginas
+            SET qr_raw = %s,
+                qr_procesado = TRUE,
+                qr_error = 'QR URL no SUNAT',
+                estado = 'revision_manual_qr'
+            WHERE id = %s
+        """, (raw, row["id"]))
+
+    aplicado = True
+    print("  QR URL no SUNAT")
+    break
+4. Importante: vuelve a reclasificar antes de QR
+SQL
+UPDATE documentos_paginas
+SET estado = 'separado',
+    tipo_detectado = NULL,
+    serie = NULL,
+    numero = NULL,
+    ruc_emisor = NULL,
+    clave_documental = NULL,
+    requiere_qr = FALSE,
+    qr_procesado = FALSE,
+    qr_raw = NULL,
+    qr_error = NULL
+WHERE cliente_abreviatura = 'BBTEC'
+  AND anio = 2026
+  AND mes = 1
+  AND tipo_detectado = 'guia_remision';
+Luego:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+python app/reporte_pendientes_qr.py --year 2026 --cliente BBTEC --month 1
+Recién después:
+Bash
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
+Esto debería bajar bastante los 21 pendientes QR.
