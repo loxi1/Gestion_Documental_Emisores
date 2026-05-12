@@ -145,12 +145,13 @@ def extract_os_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
-        r"ORDEN\s+DE\s+SERVICIO.*?N[°º*?:]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
+        r"ORDEN\s+DE\s+SERVICIO\s*(?:\n|\s)+N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
+        r"ORDEN\s+DE\s+SERVICIO.{0,80}?N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
     ]
 
     for pattern in patterns:
-        m = re.search(pattern, t, re.I)
+        m = re.search(pattern, t, re.I | re.S)
         if m:
             return m.group(1).zfill(6)
 
@@ -267,7 +268,7 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     if is_documento_extranjero_o_proforma(t):
         return "otro"
 
-    if is_guia_text(t, archivo_fuente):
+    if is_guia_text(t, archivo_fuente) or is_guia_visual_text(t):
         return "guia_remision"
 
     if is_factura_text(t, archivo_fuente):
@@ -491,6 +492,12 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     oc_num = extract_oc_from_text(text)
     os_num = extract_os_from_text(text)
 
+    if os_num and not is_factura_text(text, archivo_fuente) and not is_guia_text(text, archivo_fuente):
+        tipo = "orden_servicio"
+
+    elif tipo == "otro" and is_orden_compra_text(text, cliente):
+        tipo = "orden_compra"
+
     data = {
         "tipo": tipo,
         "serie": None,
@@ -604,3 +611,29 @@ def is_documento_extranjero_o_proforma(text: str) -> bool:
         or "BANK DETAILS" in t
         or "SHENZHEN" in t
     )
+
+
+def is_guia_visual_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    señales = [
+        "DATOS DEL TRASLADO",
+        "DATOS DEL TRANSPORTE",
+        "DATOS DEL TRANSPORTISTA",
+        "BIENES POR TRANSPORTAR",
+        "BIENES TRASLADADOS",
+        "MOTIVO DEL TRASLADO",
+        "PUNTO DE PARTIDA",
+        "PUNTO DE LLEGADA",
+        "GUIA REMITENTE ELECTRONICA",
+        "GUÍA REMITENTE ELECTRÓNICA",
+        "GUIA DE REMISION",
+        "GUÍA DE REMISIÓN",
+        "REPRESENTACION IMPRESA DE LA GUIA",
+        "REPRESENTACIÓN IMPRESA DE LA GUÍA",
+    ]
+
+    score = sum(1 for s in señales if s in t or compact_text(s) in c)
+
+    return score >= 2
