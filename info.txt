@@ -1,71 +1,54 @@
-Sí. Para solucionar OS faltan 2 ajustes:
-Mejorar regex porque Orden de Servicio puede estar separado de Nº:000221.
-Mandar a revision_manual cualquier OS/OC/guía/NI sin clave, no solo otro.
-En 04-0194 P2 sí existe texto claro: Orden de Servicio Nº:000221, por eso debe detectar OS. �
-En 04-0060 P2 y 04-0246 P3 la imagen visible está cortada desde media página y no se ve el encabezado con número de OS; ahí lo seguro es revision_manual si no se logra extraer número. � �
-04-0194 E001 754 20101635873 SIM CONTRATISTAS GENERALES E.I.R.L._P2.pdf
-04-0060 F002 14689 20101120792 LOGYTEC S.A._P2.pdf
-04-0246 F021 8023 20602177271 PROMECAL SOCIEDAD ANONIMA CERRADA - PROMECAL S.A.C._P3.pdf
-1. Reemplaza extract_os_from_text()
+Validé el archivo pegado. Está casi bien, pero todavía le falta el ajuste principal para OS.
+Ahora mismo tu enrich_page() hace esto:
 Python
-def extract_os_from_text(text: str) -> str | None:
-    t = norm(text)
-
-    patterns = [
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*║?:]?\s*:?\s*0*(\d{3,10})",
-        r"ORDEN\s+DE\s+SERVICIO.*?N[°º*║?:]?\s*:?\s*0*(\d{3,10})",
-        r"ORDEN\s+DE\s+SERVICIO.*?(?:NRO|N\.|NO|NUMERO)\s*:?\s*0*(\d{3,10})",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            return m.group(1).zfill(6)
-
-    return None
-2. Reemplaza is_orden_servicio_text()
-Python
-def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
-    t = norm(text)
-
-    if "ORDEN DE SERVICIO" not in t:
-        return False
-
-    if not tiene_cliente_destino(t, cliente):
-        return False
-
-    return extract_os_from_text(t) is not None
-3. En clasificar_paginas.py, mejora nuevo_estado
-Reemplaza tu lógica de nuevo_estado por esta:
-Python
-nuevo_estado = "clasificado"
-
-tipos_con_clave_obligatoria = {
-    "factura",
-    "guia_remision",
-    "orden_compra",
-    "orden_servicio",
-    "nota_ingreso",
-    "pago_transferencia",
-    "pago_detraccion",
-}
-
-texto = (row["texto_extraido"] or "").strip()
-
-if data["tipo"] == "otro" and len(texto) > 30:
-    nuevo_estado = "revision_manual"
-
-elif data["tipo"] in tipos_con_clave_obligatoria and not data["clave_documental"]:
-    nuevo_estado = "revision_manual"
-Y asegúrate de usar:
-SQL
-estado = %s
-en vez de:
-SQL
-estado = 'clasificado'
-Resultado esperado
+tipo = detect_tipo(...)
+oc_num = extract_oc_from_text(...)
+os_num = extract_os_from_text(...)
+pero no corrige tipo cuando os_num existe. Por eso te pasa esto:
 Plain text
+tipo_detectado = otro
+orden_servicio = 000223
+clave_documental = NULL
+El snippet actual muestra que orden_servicio sí se llena, pero tipo queda como venía de detect_tipo. �
+Código pegado: py
+Corrige solo enrich_page()
+Reemplaza el inicio por esto:
+Python
+def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
+    oc_num = extract_oc_from_text(text)
+    os_num = extract_os_from_text(text)
+
+    tipo = detect_tipo(text, archivo_fuente, cliente)
+
+    if os_num:
+        tipo = "orden_servicio"
+
+    elif tipo == "otro" and is_orden_compra_text(text, cliente):
+        tipo = "orden_compra"
+
+    data = {
+        "tipo": tipo,
+        "serie": None,
+        "numero": None,
+        "ruc": None,
+        "razon_social_emisor": None,
+        "orden_servicio": os_num,
+        "orden_compra": oc_num,
+        "clave_documental": None,
+        "banco": None,
+        "codigo_operacion": None,
+    }
+Y confirma que tengas esto:
+Python
+elif tipo == "orden_servicio":
+    os_data = extract_os(text, cliente)
+    data.update({
+        "orden_servicio": os_data["numero"],
+        "clave_documental": os_data["clave"],
+    })
+Resultado esperado
+Después de reclasificar:
+Plain text
+04-0060 P2 -> orden_servicio clave=OS|000223
 04-0194 P2 -> orden_servicio clave=OS|000221
-04-0060 P2 -> revision_manual si no aparece número OS
-04-0246 P3 -> revision_manual si no aparece número OS
-Con esto no se pierden esas páginas y las OS detectables sí se clasifican bien.
+Eso es lo que falta.
