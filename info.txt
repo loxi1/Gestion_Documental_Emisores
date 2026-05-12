@@ -1,20 +1,77 @@
-Perfecto. Agrega este archivo nuevo.
-1. app/core/sunat_text_parser.py
+Perfecto. Ya estás en una etapa donde el flujo debe quedar estable para ejecutar desde:
+Bash
+python copiar_trabajo.py ...
+Entonces ahora sí conviene cerrar bien:
+sunat_text_parser.py
+limpiar_lote.py
+flujo completo
+herencia multipágina
+reinicio limpio del lote
+1. Código FINAL app/core/sunat_text_parser.py
 Python
 from __future__ import annotations
 
 import re
 
 
+VALID_SERIES_PREFIXES = (
+    "T",
+    "TG",
+    "EG",
+)
+
+
+INVALID_SERIES_WORDS = {
+    "TIDAD",
+    "TREGA",
+    "TAL",
+    "TARIO",
+    "DON",
+    "MARCA",
+    "PESO",
+    "DATOS",
+    "RUC",
+    "DESTINO",
+    "TRANSPORTE",
+}
+
+
 def norm_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").upper()).strip()
+
+
+def is_valid_guia_serie(serie: str | None) -> bool:
+    if not serie:
+        return False
+
+    s = serie.upper().strip()
+
+    if s in INVALID_SERIES_WORDS:
+        return False
+
+    if len(s) < 3:
+        return False
+
+    if not any(s.startswith(p) for p in VALID_SERIES_PREFIXES):
+        return False
+
+    if not re.match(r"^[A-Z0-9]+$", s):
+        return False
+
+    if len(re.findall(r"[A-Z]", s)) > 2 and not re.search(r"\d", s):
+        return False
+
+    return True
 
 
 def normalize_serie_guia(serie: str | None) -> str | None:
     if not serie:
         return None
 
-    s = serie.upper().strip().replace(" ", "")
+    s = serie.upper().strip()
+
+    s = re.sub(r"\s+", "", s)
+    s = re.sub(r"[^A-Z0-9]", "", s)
 
     replacements = {
         "TGO0O": "TG00",
@@ -30,6 +87,22 @@ def normalize_serie_guia(serie: str | None) -> str | None:
     for old, new in replacements.items():
         s = s.replace(old, new)
 
+    s = re.sub(r"^EG0+([1-9][0-9]*)$", r"EG\1", s)
+    s = re.sub(r"^TG0+([1-9][0-9]*)$", r"TG\1", s)
+    s = re.sub(r"^T0+([1-9][0-9]*)$", r"T\1", s)
+
+    if len(s) > 6:
+        return None
+
+    if not any(s.startswith(p) for p in VALID_SERIES_PREFIXES):
+        return None
+
+    if not re.match(r"^[A-Z]{1,3}[0-9]{1,4}$", s):
+        return None
+
+    if not is_valid_guia_serie(s):
+        return None
+
     return s
 
 
@@ -41,8 +114,8 @@ def is_sunat_guia_text(text: str | None) -> bool:
         or "GUÍA DE REMISIÓN ELECTRÓNICA" in t
         or "GUIA DE REMISION REMITENTE" in t
         or "GUÍA DE REMISIÓN REMITENTE" in t
-        or "GUÍA REMITENTE ELECTRÓNICA" in t
         or "GUIA REMITENTE ELECTRONICA" in t
+        or "GUÍA REMITENTE ELECTRÓNICA" in t
     )
 
 
@@ -57,33 +130,38 @@ def extract_ruc_emisor(text: str | None) -> str | None:
 
     for pattern in patterns:
         m = re.search(pattern, t, re.I)
+
         if m:
             return m.group(1)
 
     return None
 
 
-def extract_guia_serie_numero(text: str | None) -> tuple[str | None, str | None]:
+def extract_guia_serie_numero(
+    text: str | None,
+) -> tuple[str | None, str | None]:
     t = norm_text(text)
 
     patterns = [
         r"N[°º*]?\s*:?\s*([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
-        r"GUIA\s+DE\s+REMISION.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
-        r"GUÍA\s+DE\s+REMISIÓN.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
-        r"GUIA\s+REMITENTE.*?([A-Z0-9]{3,6})\s*[- ]\s*0*(\d{1,10})",
         r"\b(TG\d{2,5}|EG\d{2,5}|T\d{3,5})\s*[- ]\s*0*(\d{1,10})\b",
         r"\b(TGO0O\d?|TGOO\d?|TGO\d?|EGO\d?|TOO\d?|TO0\d?)\s*[- ]?\s*0*(\d{1,10})\b",
     ]
 
     for pattern in patterns:
         m = re.search(pattern, t, re.I)
+
         if not m:
             continue
 
         serie = normalize_serie_guia(m.group(1))
         numero = m.group(2).lstrip("0") or "0"
 
-        if serie and numero:
+        if (
+            serie
+            and numero
+            and is_valid_guia_serie(serie)
+        ):
             return serie, numero
 
     return None, None
@@ -106,98 +184,90 @@ def parse_sunat_guia_from_text(text: str | None) -> dict | None:
         "ruc_emisor": ruc,
         "clave_documental": f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}",
     }
-2. Cambio en app/core/document_enricher.py
-Agrega arriba:
+2. ACTUALIZAR app/limpiar_lote.py
+Debes agregar limpieza de:
+qr_raw
+qr_error
+qr_procesado
+requiere_qr
+estado
+clave_documental
+agrupados
+extraídos
+Código FINAL importante
+Dentro del reset:
 Python
-from core.sunat_text_parser import parse_sunat_guia_from_text
-Dentro de enrich_page(), en el bloque:
+cur.execute("""
+    UPDATE documentos_paginas
+    SET estado = 'separado',
+        tipo_detectado = NULL,
+        serie = NULL,
+        numero = NULL,
+        ruc_emisor = NULL,
+        razon_social_emisor = NULL,
+        orden_servicio = NULL,
+        orden_compra = NULL,
+        clave_documental = NULL,
+        requiere_qr = FALSE,
+        qr_procesado = FALSE,
+        qr_raw = NULL,
+        qr_error = NULL,
+        banco_abreviatura = NULL,
+        codigo_operacion = NULL
+    WHERE cliente_abreviatura = %s
+    AND anio = %s
+    AND mes = %s
+""", (cliente, year, month))
+También limpiar tablas derivadas
 Python
-elif tipo == "guia_remision":
-reemplázalo por este:
+cur.execute("""
+    DELETE FROM documentos_agrupados
+    WHERE cliente_abreviatura = %s
+    AND anio = %s
+    AND mes = %s
+""", (cliente, year, month))
 Python
-elif tipo == "guia_remision":
-    sunat_guia = parse_sunat_guia_from_text(text)
-
-    if sunat_guia:
-        data.update({
-            "serie": sunat_guia["serie"],
-            "numero": sunat_guia["numero"],
-            "ruc": sunat_guia["ruc_emisor"],
-            "clave_documental": sunat_guia["clave_documental"],
-        })
-    else:
-        g = extract_guia(text, archivo_fuente)
-        data.update({
-            "serie": g["serie"],
-            "numero": g["numero"],
-            "ruc": g["ruc"],
-            "clave_documental": g["clave"],
-        })
-Con esto guías SUNAT como:
+cur.execute("""
+    DELETE FROM documentos_extraidos
+    WHERE lote_id IN (
+        SELECT id
+        FROM lotes_procesamiento
+        WHERE cliente_abreviatura = %s
+        AND anio = %s
+        AND mes = %s
+    )
+""", (cliente, year, month))
+3. Flujo FINAL desde copiar_trabajo.py
+El flujo REAL recomendado ya queda así:
 Plain text
-N° T001 - 00000226
-N° EG07 - 00000972
-N° TG01 - 00029155
-ya no irán a QR.
-3. Cambio en app/procesar_qr_pendientes.py
-Dentro de:
-Python
-for raw in qr_candidates:
-pon esto al inicio:
-Python
-print(f"  RAW QR -> {raw}")
-
-if raw.startswith("http"):
-    if "e-factura.sunat.gob.pe" in raw and "descargaqr" in raw:
-        with get_cursor(commit=True) as (_, cur):
-            cur.execute("""
-                UPDATE documentos_paginas
-                SET qr_raw = %s,
-                    qr_procesado = TRUE,
-                    qr_error = 'QR SUNAT URL sin datos directos',
-                    estado = 'revision_manual_qr'
-                WHERE id = %s
-            """, (raw, row["id"]))
-
-        aplicado = True
-        print("  QR SUNAT URL guardado; usar texto/OCR o revisión manual")
-        break
-
-    with get_cursor(commit=True) as (_, cur):
-        cur.execute("""
-            UPDATE documentos_paginas
-            SET qr_raw = %s,
-                qr_procesado = TRUE,
-                qr_error = 'QR URL no SUNAT',
-                estado = 'revision_manual_qr'
-            WHERE id = %s
-        """, (raw, row["id"]))
-
-    aplicado = True
-    print("  QR URL no SUNAT")
-    break
-4. Importante: vuelve a reclasificar antes de QR
-SQL
-UPDATE documentos_paginas
-SET estado = 'separado',
-    tipo_detectado = NULL,
-    serie = NULL,
-    numero = NULL,
-    ruc_emisor = NULL,
-    clave_documental = NULL,
-    requiere_qr = FALSE,
-    qr_procesado = FALSE,
-    qr_raw = NULL,
-    qr_error = NULL
-WHERE cliente_abreviatura = 'BBTEC'
-  AND anio = 2026
-  AND mes = 1
-  AND tipo_detectado = 'guia_remision';
-Luego:
-Bash
-python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-python app/reporte_pendientes_qr.py --year 2026 --cliente BBTEC --month 1
-Recién después:
-Bash
-python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
-Esto debería bajar bastante los 21 pendientes QR.
+copiar_trabajo.py
+    ↓
+separar_fragmentos.py
+    ↓
+clasificar_paginas.py
+    ↓
+procesar_qr_pendientes.py
+    ↓
+agrupar_fragmentos.py
+    ↓
+distribuir_agrupados.py
+4. Flujo REAL documental
+Primero:
+Plain text
+Texto SUNAT
+Segundo:
+Plain text
+OCR
+Tercero:
+Plain text
+QR
+Eso ya quedó correctamente planteado.
+5. Lo siguiente que REALMENTE toca
+Ya no QR.
+Ahora toca:
+HERENCIA MULTIPÁGINA
+Porque:
+Plain text
+P1 -> cabecera
+P2/P3/P4 -> anexos
+y eso te resolverá casi todos los pendientes restantes automáticamente.
