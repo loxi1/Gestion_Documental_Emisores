@@ -119,7 +119,35 @@ def procesar(year: int, cliente: str, month: int, debug: bool = False):
 
         for raw in qr_candidates:
 
-            print(f"  RAW QR -> {raw}")
+            if raw.startswith("http"):
+                if "e-factura.sunat.gob.pe" in raw and "descargaqr" in raw:
+                    with get_cursor(commit=True) as (_, cur):
+                        cur.execute("""
+                            UPDATE documentos_paginas
+                            SET qr_raw = %s,
+                                qr_procesado = TRUE,
+                                qr_error = 'QR SUNAT URL sin datos directos',
+                                estado = 'revision_manual_qr'
+                            WHERE id = %s
+                        """, (raw, row["id"]))
+
+                    aplicado = True
+                    print("  QR SUNAT URL guardado; usar texto/OCR o revisión manual")
+                    break
+
+                with get_cursor(commit=True) as (_, cur):
+                    cur.execute("""
+                        UPDATE documentos_paginas
+                        SET qr_raw = %s,
+                            qr_procesado = TRUE,
+                            qr_error = 'QR URL no SUNAT',
+                            estado = 'revision_manual_qr'
+                        WHERE id = %s
+                    """, (raw, row["id"]))
+
+                aplicado = True
+                print("  QR URL no SUNAT")
+                break
 
             parsed = parse_qr_payload(raw)
 

@@ -532,13 +532,23 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
         })
 
     elif tipo == "guia_remision":
-        g = extract_guia(text, archivo_fuente)
-        data.update({
-            "serie": g["serie"],
-            "numero": g["numero"],
-            "ruc": g["ruc"],
-            "clave_documental": g["clave"],
-        })
+        sunat_guia = parse_sunat_guia_from_text(text)
+
+        if sunat_guia:
+            data.update({
+                "serie": sunat_guia["serie"],
+                "numero": sunat_guia["numero"],
+                "ruc": sunat_guia["ruc_emisor"],
+                "clave_documental": sunat_guia["clave_documental"],
+            })
+        else:
+            g = extract_guia(text, archivo_fuente)
+            data.update({
+                "serie": g["serie"],
+                "numero": g["numero"],
+                "ruc": g["ruc"],
+                "clave_documental": g["clave"],
+            })
 
     elif tipo == "orden_compra":
         oc = extract_oc(text, cliente)
