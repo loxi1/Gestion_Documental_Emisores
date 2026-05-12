@@ -1,14 +1,75 @@
-Sí revisé el repo: en GitHub sí existe parse_qr_payload() dentro de app/core/qr_parser.py. �
-Entonces tu error significa que tu archivo local app/core/qr_parser.py no está igual al repo o quedó incompleto.
-GitHub
-Reemplaza tu app/core/qr_parser.py por este:
-Python
+Sí, tienes razón: 04-0029 P2 no tiene QR visible, solo dice “Para consultar…” abajo; por eso no debe gastar 3 minutos intentando leer QR. �
+04-0029 F001 670 20602867227 MAX CENTER E.I.R.L._P2.pdf
+En cambio otros sí tienen QR visible, por ejemplo 04-0037 P2, 04-0062 P3, 04-0068 P3, 04-0071 P3, 04-0073 P3, 04-0205 P1, 04-0211 P4, 04-0217 P4. � � � � � � � �
+04-0037 F001 909 20565747356 BBTI S.A.C._P2.pdf
+04-0062 F001 56458 20519022461 CONSORCIO ELECTRICO INDUSTRIAL S.A._P3.pdf
+04-0068 F001 12825 20508312998 PROVEEDOR INDUSTRIAL FERRETERO S.A._P3.pdf
+04-0071 F004 1312 20614327201 PROVEEDOR DE EPPS S.A.C._P3.pdf
+04-0073 FM48 13050 20511914125 SOLTRAK S.A._P3.pdf
+04-0205 F103 29118 20101484212 REFRIGERACION RENZO S A_P1.pdf
+04-0211 FE01 57500 20508179031 CONTROL Y TECNOLOGIA S.A.C._P4.pdf
+04-0217 F001 3254 20606289660 BREXTON CAPITAL S.A.C._P4.pdf
+Cambio recomendado
+El QR PRO debe tener 2 modos:
+Bash
+# rápido, sin debug, pocas variantes
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
 
-Luego prueba rápido:
-Bash
-python -c "from app.core.qr_parser import parse_qr_payload; print(parse_qr_payload('20518202406|09|T002|218283|0|2026-01-10|6|20299922821'))"
-Si estás parado dentro del proyecto y usas imports como from core..., usa:
-Bash
-python -c "from core.qr_parser import parse_qr_payload; print(parse_qr_payload('20518202406|09|T002|218283|0|2026-01-10|6|20299922821'))"
-Además, tu procesar_qr_pendientes.py del repo todavía importa decode_qr_from_pdf desde core.qr_reader, no el nuevo qr_utils. �
-GitHub
+# profundo, solo para revisar casos difíciles
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1 --debug
+En app/core/qr_utils.py
+Cambia la función decode_qr_from_pdf_pro() para que reciba debug=False:
+Python
+def decode_qr_from_pdf_pro(
+    pdf_path,
+    max_pages=1,
+    dpi=320,
+    debug_dir=None,
+    debug=False,
+):
+Dentro cambia los loops así:
+Python
+zones = list(iter_zones(img_bgr))
+
+if not debug:
+    zones = [
+        item for item in zones
+        if item[0] in ("full", "bottom_left", "bottom_right", "bottom")
+    ]
+
+angles = (0, 90, 180, 270) if debug else (0,)
+
+for zone_name, zone in zones:
+    for angle in angles:
+        rotated = rotate_image(zone, angle)
+
+        variants = list(build_variants(rotated))
+
+        if not debug:
+            variants = [
+                item for item in variants
+                if item[0] in ("gray", "resize_x2", "resize_x2_otsu")
+            ]
+
+        for variant_name, variant in variants:
+            decoded = decode_qr_from_image(variant)
+Y el guardado debug debe quedar así:
+Python
+if debug and debug_path and not decoded:
+    filename = f"{path.stem}_p{page_index}_{zone_name}_{angle}_{variant_name}.png"
+    cv2.imwrite(str(debug_path / filename), variant)
+En procesar_qr_pendientes.py
+Cambia la llamada:
+Python
+qr_candidates = decode_qr_from_pdf_pro(
+    pdf_path,
+    max_pages=1,
+    dpi=320,
+    debug_dir=debug_dir,
+    debug=debug,
+)
+Resultado
+04-0029 P2 fallará rápido.
+Los que sí tienen QR intentará leerlos.
+--debug solo lo usas para 2 o 3 casos difíciles, no para los 22.
+Para 04-0029 P2, mándalo directo a revisión manual QR o completa manualmente la guía si ves serie/número en la página completa.
