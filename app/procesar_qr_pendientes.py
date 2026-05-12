@@ -4,6 +4,7 @@ from pathlib import Path
 from core.db import get_cursor
 from core.qr_reader import decode_qr_from_pdf
 from core.qr_parser import parse_qr_payload
+from core.qr_utils import decode_qr_from_pdf_pro
 
 
 def build_clave(tipo: str, ruc: str | None, serie: str | None, numero: str | None) -> str | None:
@@ -34,6 +35,16 @@ def aplicar_qr_a_data(parsed: dict) -> dict:
     }
 
 
+def resolver_ruta_pagina(row: dict, year: int, cliente: str, month: int) -> Path:
+    if row.get("ruta_pagina_pdf"):
+        return Path(row["ruta_pagina_pdf"])
+
+    nombre = row["archivo_fuente"].replace(".pdf", "")
+    pagina = row["pagina"]
+
+    return Path("storage") / "tmp" / "pages" / str(year) / cliente / f"{month:02d}" / f"{nombre}_P{pagina}.pdf"
+
+
 def procesar(year: int, cliente: str, month: int):
     cliente = cliente.upper()
 
@@ -42,32 +53,20 @@ def procesar(year: int, cliente: str, month: int):
             SELECT *
             FROM documentos_paginas
             WHERE requiere_qr = TRUE
-            AND qr_procesado = FALSE
-            AND cliente_abreviatura = %s
-            AND anio = %s
-            AND mes = %s
+              AND qr_procesado = FALSE
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
             ORDER BY archivo_fuente, pagina
         """, (cliente, year, month))
         rows = cur.fetchall()
 
     print(f"Páginas pendientes QR: {len(rows)}")
 
+    debug_dir = Path("storage") / "tmp" / "qr_debug" / str(year) / cliente / f"{month:02d}"
+
     for row in rows:
-        ruta = row.get("ruta_pagina_pdf")
-
-        if not ruta:
-            with get_cursor(commit=True) as (_, cur):
-                cur.execute("""
-                    UPDATE documentos_paginas
-                    SET qr_procesado = TRUE,
-                        qr_error = 'Sin ruta_pagina_pdf',
-                        estado = 'revision_manual_qr'
-                    WHERE id = %s
-                """, (row["id"],))
-            print(f"[SIN RUTA] {row['archivo_fuente']} P{row['pagina']}")
-            continue
-
-        pdf_path = Path(ruta)
+        pdf_path = resolver_ruta_pagina(row, year, cliente, month)
 
         if not pdf_path.exists():
             with get_cursor(commit=True) as (_, cur):
@@ -78,12 +77,18 @@ def procesar(year: int, cliente: str, month: int):
                         estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (f"No existe archivo: {pdf_path}", row["id"]))
+
             print(f"[NO EXISTE] {pdf_path}")
             continue
 
         print(f"[QR] {row['archivo_fuente']} P{row['pagina']}")
 
-        qr_candidates = decode_qr_from_pdf(pdf_path, max_pages=1, dpi=280)
+        qr_candidates = decode_qr_from_pdf_pro(
+            pdf_path,
+            max_pages=1,
+            dpi=420,
+            debug_dir=debug_dir,
+        )
 
         if not qr_candidates:
             with get_cursor(commit=True) as (_, cur):
@@ -94,6 +99,7 @@ def procesar(year: int, cliente: str, month: int):
                         estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (row["id"],))
+
             print("  QR no detectado")
             continue
 
@@ -152,6 +158,7 @@ def procesar(year: int, cliente: str, month: int):
                         estado = 'revision_manual_qr'
                     WHERE id = %s
                 """, (row["id"],))
+
             print("  QR no usable")
 
 
