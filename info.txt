@@ -1,54 +1,356 @@
-Validé el archivo pegado. Está casi bien, pero todavía le falta el ajuste principal para OS.
-Ahora mismo tu enrich_page() hace esto:
+Sí. Tu qr_reader.py ya tiene base buena: usa OpenCV, convert_from_path, zonas/crops y variantes simples. �
+La mejora será reemplazarlo por una versión más fuerte y actualizar procesar_qr_pendientes.py.
+GitHub
+1. Reemplaza app/core/qr_reader.py
 Python
-tipo = detect_tipo(...)
-oc_num = extract_oc_from_text(...)
-os_num = extract_os_from_text(...)
-pero no corrige tipo cuando os_num existe. Por eso te pasa esto:
-Plain text
-tipo_detectado = otro
-orden_servicio = 000223
-clave_documental = NULL
-El snippet actual muestra que orden_servicio sí se llena, pero tipo queda como venía de detect_tipo. �
-Código pegado: py
-Corrige solo enrich_page()
-Reemplaza el inicio por esto:
+from __future__ import annotations
+
+from pathlib import Path
+import cv2
+import numpy as np
+from pdf2image import convert_from_path
+
+from core.config import POPPLER_PATH
+
+
+def _decode_opencv(img: np.ndarray) -> list[str]:
+    results = []
+
+    if img is None or img.size == 0:
+        return results
+
+    detector = cv2.QRCodeDetector()
+
+    try:
+        data, _, _ = detector.detectAndDecode(img)
+        if data and data.strip():
+            results.append(data.strip())
+    except Exception:
+        pass
+
+    try:
+        ok, decoded_info, _, _ = detector.detectAndDecodeMulti(img)
+        if ok and decoded_info:
+            for item in decoded_info:
+                item = (item or "").strip()
+                if item and item not in results:
+                    results.append(item)
+    except Exception:
+        pass
+
+    return results
+
+
+def _rotate(img: np.ndarray, angle: int) -> np.ndarray:
+    if angle == 90:
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    if angle == 180:
+        return cv2.rotate(img, cv2.ROTATE_180)
+    if angle == 270:
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return img
+
+
+def _sharpen(gray: np.ndarray) -> np.ndarray:
+    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    return cv2.filter2D(gray, -1, kernel)
+
+
+def _variants(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    variants = []
+
+    gray = img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    variants.append(("gray", gray))
+
+    for scale in (2, 3, 4):
+        up = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        variants.append((f"resize_x{scale}", up))
+
+        _, th = cv2.threshold(up, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        variants.append((f"resize_x{scale}_otsu", th))
+
+        ad = cv2.adaptiveThreshold(
+            up,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            5,
+        )
+        variants.append((f"resize_x{scale}_adaptive", ad))
+
+        sharp = _sharpen(up)
+        variants.append((f"resize_x{scale}_sharpen", sharp))
+
+    return variants
+
+
+def _zones(img: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    h, w = img.shape[:2]
+
+    coords = [
+        ("full", 0, 0, w, h),
+        ("bottom_right", int(w * 0.45), int(h * 0.45), w, h),
+        ("bottom_left", 0, int(h * 0.45), int(w * 0.60), h),
+        ("bottom", 0, int(h * 0.50), w, h),
+        ("right", int(w * 0.50), 0, w, h),
+        ("top_right", int(w * 0.45), 0, w, int(h * 0.55)),
+        ("center", int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80)),
+    ]
+
+    output = []
+
+    for name, x1, y1, x2, y2 in coords:
+        crop = img[y1:y2, x1:x2]
+        if crop.size:
+            output.append((name, crop))
+
+    return output
+
+
+def decode_qr_from_pdf(
+    pdf_path: str | Path,
+    max_pages: int = 1,
+    dpi: int = 420,
+    debug_dir: str | Path | None = None,
+) -> list[str]:
+    path = Path(pdf_path)
+
+    if not path.exists() or path.suffix.lower() != ".pdf":
+        return []
+
+    debug_base = Path(debug_dir) if debug_dir else None
+    if debug_base:
+        debug_base.mkdir(parents=True, exist_ok=True)
+
+    results = []
+
+    try:
+        pages = convert_from_path(
+            str(path),
+            dpi=dpi,
+            first_page=1,
+            last_page=max_pages,
+            poppler_path=POPPLER_PATH,
+        )
+    except Exception:
+        return []
+
+    for page_index, page in enumerate(pages, start=1):
+        img_rgb = np.array(page)
+        img = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+
+        for zone_name, zone in _zones(img):
+            for angle in (0, 90, 180, 270):
+                rotated = _rotate(zone, angle)
+
+                for variant_name, variant in _variants(rotated):
+                    decoded = _decode_opencv(variant)
+
+                    if debug_base and not decoded:
+                        debug_file = debug_base / f"{path.stem}_p{page_index}_{zone_name}_{angle}_{variant_name}.png"
+                        try:
+                            cv2.imwrite(str(debug_file), variant)
+                        except Exception:
+                            pass
+
+                    for item in decoded:
+                        if item not in results:
+                            results.append(item)
+
+    return results
+2. Reemplaza app/procesar_qr_pendientes.py
+Tu script ya filtra por lote correctamente. �
+Cambia solo para usar dpi=420, debug y reconstruir ruta si falta.
+GitHub
 Python
-def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
-    oc_num = extract_oc_from_text(text)
-    os_num = extract_os_from_text(text)
+import argparse
+from pathlib import Path
 
-    tipo = detect_tipo(text, archivo_fuente, cliente)
+from core.db import get_cursor
+from core.qr_reader import decode_qr_from_pdf
+from core.qr_parser import parse_qr_payload
 
-    if os_num:
-        tipo = "orden_servicio"
 
-    elif tipo == "otro" and is_orden_compra_text(text, cliente):
-        tipo = "orden_compra"
+def build_clave(tipo: str, ruc: str | None, serie: str | None, numero: str | None) -> str | None:
+    if not tipo or not serie or not numero:
+        return None
 
-    data = {
+    if tipo == "factura":
+        return f"FACTURA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    if tipo == "guia_remision":
+        return f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    return None
+
+
+def aplicar_qr_a_data(parsed: dict) -> dict:
+    tipo = parsed.get("tipo_documental")
+    serie = parsed.get("serie")
+    numero = parsed.get("numero")
+    ruc = parsed.get("ruc_emisor")
+
+    return {
         "tipo": tipo,
-        "serie": None,
-        "numero": None,
-        "ruc": None,
-        "razon_social_emisor": None,
-        "orden_servicio": os_num,
-        "orden_compra": oc_num,
-        "clave_documental": None,
-        "banco": None,
-        "codigo_operacion": None,
+        "serie": serie,
+        "numero": numero,
+        "ruc": ruc,
+        "clave_documental": build_clave(tipo, ruc, serie, numero),
     }
-Y confirma que tengas esto:
-Python
-elif tipo == "orden_servicio":
-    os_data = extract_os(text, cliente)
-    data.update({
-        "orden_servicio": os_data["numero"],
-        "clave_documental": os_data["clave"],
-    })
-Resultado esperado
-Después de reclasificar:
+
+
+def resolver_ruta_pagina(row: dict, year: int, cliente: str, month: int) -> Path:
+    if row.get("ruta_pagina_pdf"):
+        return Path(row["ruta_pagina_pdf"])
+
+    nombre = row["archivo_fuente"].replace(".pdf", "")
+    pagina = row["pagina"]
+
+    return Path("storage") / "tmp" / "pages" / str(year) / cliente / f"{month:02d}" / f"{nombre}_P{pagina}.pdf"
+
+
+def procesar(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE requiere_qr = TRUE
+              AND qr_procesado = FALSE
+              AND cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+            ORDER BY archivo_fuente, pagina
+        """, (cliente, year, month))
+        rows = cur.fetchall()
+
+    print(f"Páginas pendientes QR: {len(rows)}")
+
+    debug_dir = Path("storage") / "tmp" / "qr_debug" / str(year) / cliente / f"{month:02d}"
+
+    for row in rows:
+        pdf_path = resolver_ruta_pagina(row, year, cliente, month)
+
+        if not pdf_path.exists():
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = %s,
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (f"No existe archivo: {pdf_path}", row["id"]))
+
+            print(f"[NO EXISTE] {pdf_path}")
+            continue
+
+        print(f"[QR] {row['archivo_fuente']} P{row['pagina']}")
+
+        qr_candidates = decode_qr_from_pdf(
+            pdf_path,
+            max_pages=1,
+            dpi=420,
+            debug_dir=debug_dir,
+        )
+
+        if not qr_candidates:
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = 'QR no detectado',
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (row["id"],))
+
+            print("  QR no detectado")
+            continue
+
+        aplicado = False
+
+        for raw in qr_candidates:
+            parsed = parse_qr_payload(raw)
+
+            if not parsed:
+                continue
+
+            tipo_qr = parsed.get("tipo_documental")
+
+            if tipo_qr not in ("factura", "guia_remision"):
+                continue
+
+            data = aplicar_qr_a_data(parsed)
+
+            if not data["clave_documental"]:
+                continue
+
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET tipo_detectado = %s,
+                        serie = %s,
+                        numero = %s,
+                        ruc_emisor = %s,
+                        clave_documental = %s,
+                        qr_raw = %s,
+                        qr_procesado = TRUE,
+                        qr_error = NULL,
+                        requiere_qr = FALSE,
+                        estado = 'clasificado'
+                    WHERE id = %s
+                """, (
+                    data["tipo"],
+                    data["serie"],
+                    data["numero"],
+                    data["ruc"],
+                    data["clave_documental"],
+                    raw,
+                    row["id"],
+                ))
+
+            aplicado = True
+            print(f"  OK -> {data['clave_documental']}")
+            break
+
+        if not aplicado:
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    UPDATE documentos_paginas
+                    SET qr_procesado = TRUE,
+                        qr_error = 'QR detectado pero no parseable/usable',
+                        estado = 'revision_manual_qr'
+                    WHERE id = %s
+                """, (row["id"],))
+
+            print("  QR no usable")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+    args = parser.parse_args()
+
+    procesar(args.year, args.cliente, args.month)
+3. Antes de reintentar QR
+Resetea solo pendientes QR del lote:
+SQL
+UPDATE documentos_paginas
+SET qr_procesado = FALSE,
+    qr_error = NULL,
+    estado = 'clasificado'
+WHERE cliente_abreviatura = 'BBTEC'
+  AND anio = 2026
+  AND mes = 1
+  AND requiere_qr = TRUE;
+Luego:
+Bash
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
+python app/reporte_pendientes_qr.py --year 2026 --cliente BBTEC --month 1
+Los debug quedarán en:
 Plain text
-04-0060 P2 -> orden_servicio clave=OS|000223
-04-0194 P2 -> orden_servicio clave=OS|000221
-Eso es lo que falta.
+storage/tmp/qr_debug/2026/BBTEC/01/
