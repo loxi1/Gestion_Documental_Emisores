@@ -1,4 +1,5 @@
 import argparse
+import re
 from pathlib import Path
 
 from core.db import get_cursor
@@ -117,6 +118,9 @@ def procesar(year: int, cliente: str, month: int, debug: bool = False):
         aplicado = False
 
         for raw in qr_candidates:
+
+            print(f"  RAW QR -> {raw}")
+
             parsed = parse_qr_payload(raw)
 
             if not parsed:
@@ -130,6 +134,10 @@ def procesar(year: int, cliente: str, month: int, debug: bool = False):
             data = aplicar_qr_a_data(parsed)
 
             if not data["clave_documental"]:
+                continue
+            
+            if not qr_data_valida(data):
+                print(f"  QR parseado inválido -> {data}")
                 continue
 
             with get_cursor(commit=True) as (_, cur):
@@ -171,6 +179,24 @@ def procesar(year: int, cliente: str, month: int, debug: bool = False):
                 """, (row["id"],))
 
             print("  QR no usable")
+
+
+
+def qr_data_valida(data: dict) -> bool:
+    serie = data.get("serie") or ""
+    numero = data.get("numero") or ""
+    ruc = data.get("ruc") or ""
+
+    if not re.match(r"^(F|E|B|T|TG|EG|FFF|FE|FM)[A-Z0-9]{2,5}$", serie):
+        return False
+
+    if not numero.isdigit():
+        return False
+
+    if ruc and not re.match(r"^(10|20)\d{9}$", ruc):
+        return False
+
+    return True
 
 
 if __name__ == "__main__":
