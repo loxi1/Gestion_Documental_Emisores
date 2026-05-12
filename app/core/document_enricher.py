@@ -162,16 +162,18 @@ def is_pago_detraccion_text(text: str) -> bool:
     t = norm(text)
     c = compact_text(t)
 
+    if is_factura_text(t):
+        return False
+
     return bool(
         "SISTEMADEPAGODEOBLIGACIONESTRIBUTARIAS" in c
-        or "DLEG940" in c
-        or "DETRACCION" in t
-        or "DETRACCIONES" in t
-        or "MONTO DEL DEPOSITO" in t
-        or "MONTO DEPOSITO" in t
         or "NUMERO DE PAGO DE DETRACCIONES" in t
         or "PAGO DE DETRACCIONES" in t
-        or "NUMERO DE OPERACION" in t and "NUMERO DE COMPROBANTE" in t and "MONTO" in t
+        or (
+            "NUMERO DE OPERACION" in t
+            and "NUMERO DE COMPROBANTE" in t
+            and "MONTO" in t
+        )
     )
 
 
@@ -221,7 +223,9 @@ def is_orden_servicio_text(text: str, cliente: str = "BBTEC") -> bool:
 def is_factura_text(text: str, filename: str = "") -> bool:
     t = norm(text)
     c = compact_text(t)
-    name = norm(filename)
+
+    if is_documento_extranjero_o_proforma(t):
+        return False
 
     return bool(
         "FACTURAELECTRONICA" in c
@@ -229,8 +233,8 @@ def is_factura_text(text: str, filename: str = "") -> bool:
         or "FACTURA ELECTRÓNICA" in t
         or "REPRESENTACION IMPRESA DE LA FACTURA" in t
         or "REPRESENTACIÓN IMPRESA DE LA FACTURA" in t
-        or re.search(r"\bF[A-Z0-9]{2,4}\s*[- ]\s*0*\d{1,10}\b", t)
-        or re.search(r"\bF[A-Z0-9]{2,4}\s+\d{1,10}\b", name)
+        or "TIPO DE COMPROBANTE : FACTURA" in t
+        or "TIPO DE COMPROBANTE: FACTURA" in t
     )
 
 
@@ -238,31 +242,25 @@ def is_guia_text(text: str, filename: str = "") -> bool:
     t = norm(text)
     c = compact_text(t)
 
-    # Evita que una factura que solo REFERENCIA una guía se vuelva guía.
-    if is_factura_text(t, filename):
-        return False
-
     return bool(
-        "GUIADEREMISIONREMITENTEELECTRONICA" in c
-        or "GUIA DE REMISION REMITENTE ELECTRONICA" in t
-        or "GUÍA DE REMISIÓN REMITENTE ELECTRÓNICA" in t
-        or "MOTIVO DEL TRASLADO" in t
+        "GUIADEREMISIONELECTRONICA" in c
+        or "GUIA DE REMISION ELECTRONICA" in t
+        or "GUÍA DE REMISIÓN ELECTRÓNICA" in t
+        or "GUIA DE REMISION REMITENTE" in t
         or "DATOS DEL TRANSPORTISTA" in t
+        or "MOTIVO DE TRASLADO" in t
         or "DATOS DEL TRASLADO" in t
         or "INFORMACION DE BIENES TRASLADADOS" in t
-        or "INFORMACIÓN DE BIENES TRASLADADOS" in t
-        or "DIRECCION DE PARTIDA" in t
-        or "DIRECCIÓN DE PARTIDA" in t
-        or "DIRECCION DE LLEGADA" in t
-        or "DIRECCIÓN DE LLEGADA" in t
+        or "BIENES POR TRANSPORTAR" in t
+        or "PESO BRUTO TOTAL DE LA CARGA" in t
     )
 
 
 def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
     t = norm(text)
 
-    if is_pago_detraccion_text(t):
-        return "pago_detraccion"
+    if is_documento_extranjero_o_proforma(t):
+        return "otro"
 
     if is_orden_servicio_text(t, cliente):
         return "orden_servicio"
@@ -273,12 +271,14 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     if is_nota_ingreso_text(t):
         return "nota_ingreso"
 
-    # FACTURA debe ganar sobre "Guía de remisión remitente: XXX"
     if is_factura_text(t, archivo_fuente):
         return "factura"
 
     if is_guia_text(t, archivo_fuente):
         return "guia_remision"
+
+    if is_pago_detraccion_text(t):
+        return "pago_detraccion"
 
     if is_pago_transferencia_text(t):
         return "pago_transferencia"
@@ -569,3 +569,19 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
         })
 
     return data
+
+
+
+def is_documento_extranjero_o_proforma(text: str) -> bool:
+    t = norm(text)
+
+    return bool(
+        "PROFORMA" in t
+        or "PROFORMA INVOICE" in t
+        or "QUOTATION" in t
+        or "COMMERCIAL INVOICE" in t
+        or "PAYMENT TERM" in t
+        or "BANK DETAILS" in t
+        or "SHENZHEN" in t
+        or "INDUSTRIAL AND COMMERCIAL BANK OF CHINA" in t
+    )
