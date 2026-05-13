@@ -3,7 +3,7 @@ import argparse
 from core.db import get_cursor
 
 
-def build_clave(tipo, ruc=None, serie=None, numero=None, oc=None, os=None):
+def build_clave(tipo, ruc=None, serie=None, numero=None, oc=None, os=None, banco=None, codigo=None):
     if tipo == "factura":
         if serie and numero and ruc:
             return f"FACTURA|{ruc}|{serie}|{numero}"
@@ -23,6 +23,16 @@ def build_clave(tipo, ruc=None, serie=None, numero=None, oc=None, os=None):
     if tipo == "nota_ingreso":
         if numero:
             return f"NI|{str(numero).zfill(6)}"
+
+    if tipo == "pago_transferencia":
+        if banco and codigo:
+            return f"PAGO_TRANSFERENCIA|{banco}|{codigo}"
+
+    if tipo == "pago_detraccion":
+        if ruc and serie and numero:
+            return f"PAGO_DETRACCION|{ruc}|{serie}|{numero}"
+        if banco and codigo:
+            return f"PAGO_DETRACCION|{banco}|{codigo}"
 
     return None
 

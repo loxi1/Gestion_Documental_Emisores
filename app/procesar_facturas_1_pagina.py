@@ -60,6 +60,7 @@ def extraer_desde_nombre(nombre: str) -> dict:
 
 def nombre_factura(cliente: str, data: dict) -> str:
     return (
+        f"{data['asiento']} "
         f"{cliente} FACTURA "
         f"{data['serie']} "
         f"{data['numero']} "
