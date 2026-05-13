@@ -1,4 +1,211 @@
 
+Sí. El cambio principal en document_enricher.py es este:
+Si encuentra orden_compra u orden_servicio y la página NO es factura/guía/nota ingreso/pago, debe convertir el tipo automáticamente.
+Ahora tienes casos como 04-0161, 04-0162, 04-0154 y 04-0158 donde sí detectó orden_compra, pero quedó como otro + revision_manual. � � � �
+Pasted text.txt
+Pasted text (2).txt
+Pasted text (3).txt
+Pasted text (5).txt
+Reemplaza tu función enrich_page() por esta versión:
+Python
+def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
+    tipo = detect_tipo(text, archivo_fuente, cliente)
+
+    oc_num = extract_oc_from_text(text)
+    os_num = extract_os_from_text(text)
+
+    # Evitar que una factura/guía que menciona OC se convierta en OC
+    es_factura = is_factura_text(text, archivo_fuente)
+    es_guia = is_guia_text(text, archivo_fuente)
+    es_ni = is_nota_ingreso_text(text)
+    es_pago_transf = is_pago_transferencia_text(text)
+    es_pago_det = is_pago_detraccion_text(text)
+
+    # Regla nueva: si no es documento principal y tiene OC/OS, clasificarlo como OC/OS
+    if (
+        oc_num
+        and not es_factura
+        and not es_guia
+        and not es_ni
+        and not es_pago_transf
+        and not es_pago_det
+    ):
+        tipo = "orden_compra"
+
+    elif (
+        os_num
+        and not es_factura
+        and not es_guia
+        and not es_ni
+        and not es_pago_transf
+        and not es_pago_det
+    ):
+        tipo = "orden_servicio"
+
+    data = {
+        "tipo": tipo,
+        "serie": None,
+        "numero": None,
+        "ruc": None,
+        "razon_social_emisor": None,
+        "orden_servicio": os_num,
+        "orden_compra": oc_num,
+        "clave_documental": None,
+        "banco": None,
+        "codigo_operacion": None,
+    }
+
+    if tipo == "factura":
+        f = extract_factura_from_filename(archivo_fuente)
+
+        if not f["clave"]:
+            f_text = extract_factura_from_text(text)
+            f.update({
+                "serie": f_text["serie"],
+                "numero": f_text["numero"],
+                "ruc": f_text["ruc"],
+                "clave": f_text["clave"],
+            })
+
+        data.update({
+            "serie": f["serie"],
+            "numero": f["numero"],
+            "ruc": f["ruc"],
+            "razon_social_emisor": f.get("razon_social_emisor"),
+            "clave_documental": f["clave"],
+        })
+
+    elif tipo == "guia_remision":
+        sunat_guia = parse_sunat_guia_from_text(text)
+
+        if sunat_guia:
+            data.update({
+                "serie": sunat_guia["serie"],
+                "numero": sunat_guia["numero"],
+                "ruc": sunat_guia["ruc_emisor"],
+                "clave_documental": sunat_guia["clave_documental"],
+            })
+        else:
+            g = extract_guia(text, archivo_fuente)
+            data.update({
+                "serie": g["serie"],
+                "numero": g["numero"],
+                "ruc": g["ruc"],
+                "clave_documental": g["clave"],
+            })
+
+    elif tipo == "orden_compra":
+        numero = oc_num
+
+        if not numero:
+            oc = extract_oc(text, cliente)
+            numero = oc["numero"]
+
+        data.update({
+            "orden_compra": numero,
+            "numero": numero,
+            "clave_documental": f"OC|{numero}" if numero else None,
+        })
+
+    elif tipo == "orden_servicio":
+        numero = os_num
+
+        if not numero:
+            os_data = extract_os(text, cliente)
+            numero = os_data["numero"]
+
+        data.update({
+            "orden_servicio": numero,
+            "numero": numero,
+            "clave_documental": f"OS|{numero}" if numero else None,
+        })
+
+    elif tipo == "nota_ingreso":
+        ni = extract_ni(text)
+        data.update({
+            "numero": ni["numero"],
+            "clave_documental": ni["clave"],
+        })
+
+    elif tipo == "pago_transferencia":
+        p = extract_pago_transferencia(text)
+        data.update({
+            "banco": p["banco"],
+            "codigo_operacion": p["codigo_operacion"],
+            "clave_documental": p["clave"],
+        })
+
+    elif tipo == "pago_detraccion":
+        p = extract_pago_detraccion(text, archivo_fuente)
+        data.update({
+            "banco": p["banco"],
+            "codigo_operacion": p["codigo_operacion"],
+            "serie": p["serie"],
+            "numero": p["numero"],
+            "ruc": p["ruc"],
+            "clave_documental": p["clave"],
+        })
+
+    return data
+Y asegúrate de tener esta función fuerte para OC:
+Python
+def extract_oc_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s+N[°º*?:.\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s*[:.\-]*\s*0*(\d{3,8})",
+        r"\bO\/C\s*[:.\-]*\s*0*(\d{3,8})",
+        r"\bOC\s*[:.\-]*\s*0*(\d{3,8})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Con esto estos casos deberían pasar de:
+Plain text
+tipo_detectado = otro
+estado = revision_manual
+orden_compra = 002991
+a:
+Plain text
+tipo_detectado = orden_compra
+estado = clasificado
+clave_documental = OC|002991
+Luego resetea solo los de revisión manual y reclasifica:
+SQL
+UPDATE documentos_paginas
+SET estado = 'separado',
+    tipo_detectado = NULL,
+    clave_documental = NULL,
+    serie = NULL,
+    numero = NULL,
+    ruc_emisor = NULL,
+    razon_social_emisor = NULL,
+    requiere_qr = FALSE,
+    qr_procesado = FALSE,
+    qr_raw = NULL,
+    qr_error = NULL
+WHERE cliente_abreviatura = 'BBTEC'
+  AND anio = 2026
+  AND mes = 1
+  AND estado = 'revision_manual';
+Después:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+Para revisar los que queden:
+SQL
+SELECT id, asiento_contable, pagina, tipo_detectado, orden_compra,
+       orden_servicio, clave_documental, ruta_pagina_pdf
+FROM documentos_paginas
+WHERE cliente_abreviatura='BBTEC'
+  AND anio=2026
+  AND mes=1
+  AND estado='revision_manual'
+ORDER BY asiento_contable, pagina;
 Sí. Revisando la estructura actual de tu repo, el cambio debe hacerse principalmente en:
 Archivo principal
 app/core/document_enricher.py
