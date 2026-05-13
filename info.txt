@@ -1,42 +1,257 @@
-Sí: las facturas de 1 página se renombran dentro de procesar_facturas_1_pagina.py, no pasan por agrupar_fragmentos.py ni distribuir_agrupados.py.
-Ahora las genera así:
-Plain text
-BBTEC FACTURA E001 162 10804262119 LEGUIA_DAMIANO_WILVER.pdf
-Eso es correcto para sin_oc, pero si quieres trazabilidad visual completa, yo lo cambiaría a:
-Plain text
-04-0001 BBTEC FACTURA E001 162 10804262119 LEGUIA_DAMIANO_WILVER.pdf
-Es decir, agregar el asiento_contable al inicio.
-Qué cambiar
-En procesar_facturas_1_pagina.py, cambia la función nombre_factura().
-Actual:
+Sí, validé el repo. El archivo actual está básico: solo soporta factura, guía, OC, OS y NI; falta pagos, detracción, banco/código, QR raw/error y mejor trazabilidad. �
+GitHub
+Código final para app/editar_pagina_manual.py:
 Python
-def nombre_factura(cliente: str, data: dict) -> str:
-    return (
-        f"{cliente} FACTURA "
-        f"{data['serie']} "
-        f"{data['numero']} "
-        f"{data['ruc']} "
-        f"{limpiar(data['razon'])}.pdf"
+import argparse
+
+from core.db import get_cursor
+
+
+TIPOS_VALIDOS = {
+    "factura",
+    "guia_remision",
+    "orden_compra",
+    "orden_servicio",
+    "nota_ingreso",
+    "pago_transferencia",
+    "pago_detraccion",
+    "otro",
+}
+
+
+def normalizar_tipo(tipo: str | None) -> str | None:
+    if not tipo:
+        return None
+
+    t = tipo.strip().lower()
+
+    alias = {
+        "guia": "guia_remision",
+        "guía": "guia_remision",
+        "oc": "orden_compra",
+        "os": "orden_servicio",
+        "ni": "nota_ingreso",
+        "fact": "factura",
+        "pago": "pago_transferencia",
+        "transferencia": "pago_transferencia",
+        "detraccion": "pago_detraccion",
+        "detracción": "pago_detraccion",
+    }
+
+    return alias.get(t, t)
+
+
+def build_clave(
+    tipo,
+    ruc=None,
+    serie=None,
+    numero=None,
+    oc=None,
+    os=None,
+    banco=None,
+    codigo=None,
+):
+    if tipo == "factura":
+        if serie and numero and ruc:
+            return f"FACTURA|{ruc}|{serie}|{numero}"
+
+    if tipo == "guia_remision":
+        if serie and numero:
+            return f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}"
+
+    if tipo == "orden_compra":
+        if oc:
+            return f"OC|{str(oc).zfill(6)}"
+
+    if tipo == "orden_servicio":
+        if os:
+            return f"OS|{str(os).zfill(6)}"
+
+    if tipo == "nota_ingreso":
+        if numero:
+            return f"NI|{str(numero).zfill(6)}"
+
+    if tipo == "pago_transferencia":
+        if banco and codigo:
+            return f"PAGO_TRANSFERENCIA|{banco}|{codigo}"
+
+    if tipo == "pago_detraccion":
+        if ruc and serie and numero:
+            return f"PAGO_DETRACCION|{ruc}|{serie}|{numero}"
+        if banco and codigo:
+            return f"PAGO_DETRACCION|{banco}|{codigo}"
+
+    return None
+
+
+def preguntar(label, actual=None):
+    valor = input(f"{label} [{actual or ''}]: ").strip()
+    return valor if valor else actual
+
+
+def mostrar(row):
+    print("\nDocumento encontrado:")
+    print(f"ID: {row['id']}")
+    print(f"Cliente: {row.get('cliente_abreviatura')}")
+    print(f"Año/Mes: {row.get('anio')}/{row.get('mes')}")
+    print(f"Asiento: {row.get('asiento_contable')}")
+    print(f"Archivo: {row.get('archivo_fuente')}")
+    print(f"Página: {row.get('pagina')}")
+    print(f"Tipo actual: {row.get('tipo_detectado')}")
+    print(f"Clave actual: {row.get('clave_documental')}")
+    print(f"Serie/Número/RUC: {row.get('serie')} / {row.get('numero')} / {row.get('ruc_emisor')}")
+    print(f"OC/OS: {row.get('orden_compra')} / {row.get('orden_servicio')}")
+    print(f"Banco/Código: {row.get('banco_abreviatura')} / {row.get('codigo_operacion')}")
+    print(f"Estado: {row.get('estado')}")
+    print(f"Requiere QR: {row.get('requiere_qr')}")
+    print(f"QR error: {row.get('qr_error')}")
+    print(f"Ruta página: {row.get('ruta_pagina_pdf')}")
+    print()
+
+
+def editar(id_pagina: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM documentos_paginas
+            WHERE id = %s
+        """, (id_pagina,))
+        row = cur.fetchone()
+
+    if not row:
+        print("No existe ese ID.")
+        return
+
+    mostrar(row)
+
+    tipo_actual = row.get("tipo_detectado")
+    tipo = normalizar_tipo(preguntar("Tipo", tipo_actual))
+
+    if tipo not in TIPOS_VALIDOS:
+        print(f"Tipo inválido: {tipo}")
+        print(f"Tipos válidos: {', '.join(sorted(TIPOS_VALIDOS))}")
+        return
+
+    serie = row.get("serie")
+    numero = row.get("numero")
+    ruc = row.get("ruc_emisor")
+    razon = row.get("razon_social_emisor")
+    oc = row.get("orden_compra")
+    os = row.get("orden_servicio")
+    banco = row.get("banco_abreviatura")
+    codigo = row.get("codigo_operacion")
+
+    if tipo in ("factura", "guia_remision"):
+        serie = preguntar("Serie", serie)
+        numero = preguntar("Número", numero)
+        ruc = preguntar("RUC emisor", ruc)
+
+        if tipo == "factura":
+            razon = preguntar("Razón social emisor", razon)
+
+    elif tipo == "orden_compra":
+        oc = preguntar("Número OC", oc)
+
+    elif tipo == "orden_servicio":
+        os = preguntar("Número OS", os)
+
+    elif tipo == "nota_ingreso":
+        numero = preguntar("Número Nota Ingreso", numero)
+
+    elif tipo == "pago_transferencia":
+        banco = preguntar("Banco", banco or "SIN_BANCO")
+        codigo = preguntar("Código operación", codigo)
+
+    elif tipo == "pago_detraccion":
+        modo = preguntar("Modo detracción: comprobante/banco", "comprobante")
+
+        if modo == "banco":
+            banco = preguntar("Banco", banco or "BN")
+            codigo = preguntar("Código operación", codigo)
+        else:
+            ruc = preguntar("RUC emisor", ruc)
+            serie = preguntar("Serie factura", serie)
+            numero = preguntar("Número factura", numero)
+
+    clave = build_clave(
+        tipo=tipo,
+        ruc=ruc,
+        serie=serie,
+        numero=numero,
+        oc=oc,
+        os=os,
+        banco=banco,
+        codigo=codigo,
     )
-Final recomendado:
-Python
-def nombre_factura(cliente: str, data: dict) -> str:
-    return (
-        f"{data['asiento']} "
-        f"{cliente} FACTURA "
-        f"{data['serie']} "
-        f"{data['numero']} "
-        f"{data['ruc']} "
-        f"{limpiar(data['razon'])}.pdf"
-    )
-Así todo sin_oc queda uniforme:
-Plain text
-04-0001 BBTEC FACTURA ...
-04-0029 BBTEC GUIA_REMISION ...
-04-0029 BBTEC NOTA_INGRESO ...
-Y en BD ya queda:
-Plain text
-asiento_contable = 04-0001
-origen = factura_1_pagina
-ruta_final = data/salida/2026/BBTEC/01/sin_oc/04-0001 BBTEC FACTURA ...
-Entonces sí: el asiento contable debe agregarse en procesar_facturas_1_pagina.py, en la etapa inicial de factura simple.
+
+    print(f"\nNueva clave: {clave}")
+
+    if not clave and tipo != "otro":
+        confirmar_sin_clave = input("No se pudo generar clave. ¿Guardar como revision_manual? (s/n): ").strip().lower()
+        if confirmar_sin_clave != "s":
+            print("Cancelado.")
+            return
+        nuevo_estado = "revision_manual"
+    else:
+        nuevo_estado = "clasificado"
+
+    confirmar = input("¿Guardar cambios? (s/n): ").strip().lower()
+
+    if confirmar != "s":
+        print("Cancelado.")
+        return
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_paginas
+            SET tipo_detectado = %s,
+                serie = %s,
+                numero = %s,
+                ruc_emisor = %s,
+                razon_social_emisor = %s,
+                orden_compra = %s,
+                orden_servicio = %s,
+                banco_abreviatura = %s,
+                codigo_operacion = %s,
+                clave_documental = %s,
+                requiere_qr = FALSE,
+                qr_procesado = TRUE,
+                qr_error = NULL,
+                estado = %s
+            WHERE id = %s
+        """, (
+            tipo,
+            serie,
+            numero,
+            ruc,
+            razon,
+            oc,
+            os,
+            banco,
+            codigo,
+            clave,
+            nuevo_estado,
+            id_pagina,
+        ))
+
+    print("Actualizado correctamente.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--id", type=int, required=True)
+
+    args = parser.parse_args()
+
+    editar(args.id)
+Cuándo usarlo:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 1
+python app/reporte_pendientes_qr.py --year 2026 --cliente BBTEC --month 1
+
+# Aquí editas los IDs pendientes
+python app/editar_pagina_manual.py --id 283
+
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
