@@ -174,25 +174,43 @@ def procesar(year: int, cliente: str, month: int):
                 cur.execute("""
                     INSERT INTO documentos_agrupados (
                         asiento_contable,
+                        archivo_fuente,
                         clave_documental,
                         tipo_documental,
+                        serie,
+                        numero,
+                        orden_servicio,
+                        orden_compra,
+                        pagina_inicio,
+                        pagina_fin,
+                        paginas,
                         nombre_archivo,
                         ruta_archivo,
-                        paginas,
+                        ruta_final,
                         estado,
                         cliente_abreviatura,
                         anio,
                         mes,
                         origen
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,'agrupado',%s,%s,%s,'fragmentos')
+                    VALUES (
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,
+                        'agrupado',%s,%s,%s,'fragmentos'
+                    )
                 """, (
                     asiento,
+                    paginas_ordenadas[0]["archivo_fuente"],
                     clave,
                     data["tipo"],
+                    data.get("serie"),
+                    data.get("numero"),
+                    paginas_ordenadas[0].get("orden_servicio"),
+                    paginas_ordenadas[0].get("orden_compra"),
+                    min(nums_paginas),
+                    max(nums_paginas),
+                    ",".join(str(p) for p in nums_paginas),
                     filename,
                     str(output_pdf),
-                    ",".join(str(p) for p in nums_paginas),
                     cliente,
                     year,
                     month,
