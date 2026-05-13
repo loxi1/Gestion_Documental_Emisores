@@ -1,41 +1,64 @@
-Antes de separar_fragmentos.py, no limpies todo si ya corriste:
-Bash
-python app/limpiar_lote.py --year 2026 --cliente BBTEC --month 1
-python copiar_trabajo.py --year 2026 --cliente BBTEC --month 1
-python app/procesar_facturas_1_pagina.py --year 2026 --cliente BBTEC --month 1
-Solo valida que estén vacías las tablas de fragmentos:
-SQL
-SELECT COUNT(*) FROM documentos_paginas
-WHERE cliente_abreviatura='BBTEC' AND anio=2026 AND mes=1;
-
-SELECT COUNT(*) FROM documentos_agrupados
-WHERE cliente_abreviatura='BBTEC' AND anio=2026 AND mes=1
-  AND origen='fragmentos';
-Deben dar:
+Sí, entonces el patrón debe ser directo y obligatorio para OC:
 Plain text
-0
-0
-Si no dan 0, limpia solo fragmentos:
-SQL
-DELETE FROM documentos_agrupados
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=1
-  AND origen='fragmentos';
+Orden de Compra N*:002991
+Orden de Compra Nº:002991
+Orden de Compra N°:002991
+Orden de Compra N?:002991
+Tu detector debe buscar eso antes que cualquier otra regla.
+Regex recomendado
+Python
+def extract_orden_compra(text: str | None) -> str | None:
+    t = normalize_text(text or "")
 
-DELETE FROM documentos_paginas
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=1;
-Y limpia temporales:
-Bash
-rm -rf storage/tmp/pages/2026/BBTEC/01
-rm -rf data/salida/2026/BBTEC/01/provisional
-rm -rf data/salida/2026/BBTEC/01/con_oc
-No borres:
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+COMPRA\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Para OS igual:
+Python
+def extract_orden_servicio(text: str | None) -> str | None:
+    t = normalize_text(text or "")
+
+    patterns = [
+        r"ORDEN\s+DE\s+SERVICIO\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+SERVICIO\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Y en document_enricher.py, la prioridad debe ser:
 Plain text
-data/salida/2026/BBTEC/01/sin_oc
-porque ahí ya están las facturas de 1 página procesadas.
-Luego ejecuta:
-Bash
-python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+1. Orden de Servicio
+2. Orden de Compra
+3. Guía
+4. Factura
+5. Nota ingreso
+6. Pagos
+7. Otro
+Clave final:
+Python
+oc = extract_orden_compra(text)
+
+if oc:
+    data["tipo"] = "orden_compra"
+    data["orden_compra"] = oc
+    data["clave_documental"] = f"OC|{oc}"
+    return data
+Eso debe detectar claramente:
+Plain text
+Orden de Compra N*:002991
+como:
+Plain text
+OC|002991
+El problema ya no parece OCR; parece orden de prioridad o regex demasiado débil.
