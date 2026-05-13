@@ -1,3 +1,140 @@
+
+Sí. Revisando la estructura actual de tu repo, el cambio debe hacerse principalmente en:
+Archivo principal
+app/core/document_enricher.py
+Ahí es donde:
+detectas tipos documentales
+construyes clave_documental
+detectas OC/OS/Factura/Guía
+llenas:
+orden_compra
+orden_servicio
+tipo
+clave_documental
+Exactamente dónde
+Busca en document_enricher.py algo similar a:
+Python
+if "ORDEN DE COMPRA" in texto_upper:
+o:
+Python
+if tipo == "orden_compra":
+o funciones como:
+Python
+extract_orden_compra()
+extract_orden_servicio()
+Ahí debes reemplazar la lógica actual
+Agrega arriba del archivo
+Python
+import re
+import unicodedata
+Agrega estas funciones nuevas
+1. normalize_text()
+Python
+def normalize_text(text: str) -> str:
+    text = text or ""
+
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+
+    text = text.upper()
+
+    text = re.sub(r"\s+", " ", text)
+
+    text = text.replace("0RDEN", "ORDEN")
+    text = text.replace("C0MPRA", "COMPRA")
+    text = text.replace("SERVICI0", "SERVICIO")
+
+    return text.strip()
+2. extract_orden_compra()
+Python
+def extract_orden_compra(text: str | None) -> str | None:
+    t = normalize_text(text or "")
+
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+COMPRA\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+3. extract_orden_servicio()
+Python
+def extract_orden_servicio(text: str | None) -> str | None:
+    t = normalize_text(text or "")
+
+    patterns = [
+        r"ORDEN\s+DE\s+SERVICIO\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+SERVICIO\s+N\s*[\*\?:º°]?\s*:?\s*0*(\d{3,10})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Luego dentro de enrich_page()
+Busca donde empiezas a detectar tipos.
+ANTES de guía/factura agrega:
+Python
+texto_upper = normalize_text(texto)
+Luego agrega PRIORIDAD ALTA
+Primero OS
+Python
+os_num = extract_orden_servicio(texto)
+
+if os_num:
+    data["tipo"] = "orden_servicio"
+    data["orden_servicio"] = os_num
+    data["clave_documental"] = f"OS|{os_num}"
+
+    return data
+Luego OC
+Python
+oc_num = extract_orden_compra(texto)
+
+if oc_num:
+    data["tipo"] = "orden_compra"
+    data["orden_compra"] = oc_num
+    data["clave_documental"] = f"OC|{oc_num}"
+
+    return data
+IMPORTANTE
+Esto debe ir ANTES de:
+Python
+detect_factura()
+detect_guia()
+porque varias OC contienen:
+Plain text
+RUC
+Proveedor
+Serie
+Número
+y actualmente terminan detectadas como factura.
+Qué casos te arreglará
+Los que me reportaste:
+Plain text
+04-0161
+04-0162
+04-0155
+04-0158
+04-0195
+04-0197
+probablemente se arreglen automáticamente.
+Después del cambio
+Reprocesa SOLO fragmentos:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
+No necesitas volver a OCR.
+
 Sí, entonces el patrón debe ser directo y obligatorio para OC:
 Plain text
 Orden de Compra N*:002991
