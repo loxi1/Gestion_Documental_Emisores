@@ -230,14 +230,7 @@ def registrar_documento_agrupado_factura_1(
         ))
 
 
-def registrar_revision(
-    lote_id: int,
-    cliente: str,
-    year: int,
-    month: int,
-    pdf: Path,
-    motivo: str,
-):
+def registrar_revision(lote_id: int, pdf: Path, motivo: str):
     data = extraer_desde_nombre(pdf.name)
 
     with get_cursor(commit=True) as (_, cur):
@@ -259,28 +252,17 @@ def registrar_revision(
                 motivo_revision
             )
             VALUES (
-                %s,
-                %s,
-                'otro',
-                %s,
-                %s,
-                %s,
-                %s,
-                '1',
-                %s,
-                %s,
-                'revision',
-                'filename',
-                TRUE,
-                %s
+                %s, %s, 'otro', %s, %s, %s, %s, '1',
+                %s, %s, 'revision', 'filename',
+                TRUE, %s
             )
         """, (
             lote_id,
-            data["asiento"],
-            data["serie"],
-            data["numero"],
-            data["ruc"],
-            data["razon"],
+            data.get("asiento"),
+            data.get("serie"),
+            data.get("numero"),
+            data.get("ruc"),
+            data.get("razon"),
             pdf.name,
             str(pdf),
             motivo,
@@ -330,6 +312,13 @@ def procesar(year: int, cliente: str, month: int):
                 pdf=pdf,
                 motivo="Nombre no cumple formato de factura 1 página",
             )
+            
+            registrar_revision(
+                lote_id=lote_id,
+                pdf=pdf,
+                motivo="Nombre no cumple formato de factura 1 página",
+            )
+
             print(f"[REVISION] Nombre no cumple formato: {pdf.name}")
             revision += 1
             continue
