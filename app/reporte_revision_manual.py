@@ -28,7 +28,10 @@ def process(year: int, cliente: str, month: int):
               AND mes = %s
               AND (
                     estado = 'revision_manual'
-                    OR tipo_detectado = 'otro'
+                    OR  (
+                        tipo_detectado = 'otro'
+                        AND estado <> 'clasificado'
+                    )
                   )
             ORDER BY asiento_contable, pagina
         """, (cliente, year, month))
