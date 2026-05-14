@@ -127,10 +127,11 @@ def extract_oc_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})",
-        r"ORDEN\s+DE\s+COMPRA[^0-9]{0,25}0*(\d{3,8})",
-        r"\bO\/C[^0-9]{0,12}0*(\d{3,8})",
-        r"\bOC[^0-9]{0,12}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s*[:.\-]?\s*N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,20}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA[\s\S]{0,250}?N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"\bO\/C[^0-9]{0,20}0*(\d{3,8})",
+        r"\bOC[^0-9]{0,20}0*(\d{3,8})",
     ]
 
     for pattern in patterns:
@@ -145,9 +146,9 @@ def extract_os_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+SERVICIO\s*[:.\-]?\s*N[°º*.:;\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO\s*[:.\-]?\s*N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
         r"ORDEN\s+DE\s+SERVICIO\s+N[^0-9]{0,20}0*(\d{3,8})",
-        r"ORDEN\s+DE\s+SERVICIO[\s\S]{0,250}?N[°ºO0*.:;\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO[\s\S]{0,250}?N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
         r"\bO\/S[^0-9]{0,20}0*(\d{3,8})",
         r"\bOS[^0-9]{0,20}0*(\d{3,8})",
     ]

@@ -109,6 +109,10 @@ def crear_pdf(paginas: list[dict], output_pdf: Path):
 
 
 def construir_bloques(rows: list[dict]):
+    """
+    Agrupa por misma clave dentro del mismo asiento y archivo.
+    Evita duplicar guías/OC cuando aparecen en P1 y P4 del mismo PDF.
+    """
     grupos = {}
 
     for row in rows:
