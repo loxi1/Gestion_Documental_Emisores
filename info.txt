@@ -1,95 +1,51 @@
-Mostrar el codigo final considerarndo que se agrego def registrar_revision:
-def procesar(year: int, cliente: str, month: int):
-    cliente = cliente.upper()
-    month_str = f"{month:02d}"
+Correcto: sí tienen asiento contable en el nombre, pero extraer_desde_nombre() no lo guardó porque tu formato no calzaba con factura. Para OTRO, debemos extraer solo el asiento con regex.
+En marcar_extraido_otro.py, agrega esta función:
+Python
+import re
+Python
+def extraer_asiento(nombre: str | None) -> str:
+    m = re.search(r"\b(04-\d{4})\b", nombre or "")
+    return m.group(1) if m else "SIN_ASIENTO"
+Y cambia:
+Python
+asiento = row["asiento_contable"] or "SIN_ASIENTO"
+por:
+Python
+asiento = row["asiento_contable"] or extraer_asiento(row["nombre_provisional"])
+Tu bloque de limpieza de revision está bien, pero debe ir fuera del if origen.resolve() != destino.resolve():, para que también limpie aunque no haya movido:
+Python
+if origen.resolve() != destino.resolve():
+    shutil.move(str(origen), str(destino))
 
-    pendientes = BASE_TRABAJO / str(year) / cliente / month_str / "pendientes"
-    salida = BASE_SALIDA / str(year) / cliente / month_str / "sin_oc"
+revision_copy = (
+    BASE_SALIDA
+    / str(year)
+    / cliente
+    / f"{month:02d}"
+    / "revision"
+    / Path(row["nombre_provisional"]).name
+)
 
-    salida.mkdir(parents=True, exist_ok=True)
+if revision_copy.exists():
+    revision_copy.unlink()
+    print(f"[REVISION LIMPIADA] {revision_copy}")
+Para corregir esos 2 ya generados:
+Bash
+mv "data/salida/2026/BBTEC/01/sin_oc/SIN_ASIENTO BBTEC OTRO 04_0340_0_2695535043_ND00000019_YANAN_DAMING_LED_LIGHTING_FIXTURES_CO.pdf" \
+"data/salida/2026/BBTEC/01/sin_oc/04-0340 BBTEC OTRO 04_0340_0_2695535043_ND00000019_YANAN_DAMING_LED_LIGHTING_FIXTURES_CO.pdf"
 
-    lote_id = get_or_create_lote(year, month, cliente, pendientes, salida)
+mv "data/salida/2026/BBTEC/01/sin_oc/SIN_ASIENTO BBTEC OTRO 04_0367_PI_20260107PE_ND00000018_SHENZHEN_TOOLS_INSTRUMENT_TECHNOLOGY_CO_LTD.pdf" \
+"data/salida/2026/BBTEC/01/sin_oc/04-0367 BBTEC OTRO 04_0367_PI_20260107PE_ND00000018_SHENZHEN_TOOLS_INSTRUMENT_TECHNOLOGY_CO_LTD.pdf"
+Y actualiza BD:
+SQL
+UPDATE documentos_extraidos
+SET asiento_contable = '04-0340',
+    nombre_final = '04-0340 BBTEC OTRO 04_0340_0_2695535043_ND00000019_YANAN_DAMING_LED_LIGHTING_FIXTURES_CO.pdf',
+    ruta_final = 'data/salida/2026/BBTEC/01/sin_oc/04-0340 BBTEC OTRO 04_0340_0_2695535043_ND00000019_YANAN_DAMING_LED_LIGHTING_FIXTURES_CO.pdf'
+WHERE id = 259;
 
-    pdfs = sorted(pendientes.glob("*.pdf"))
-
-    print(f"Pendientes: {pendientes}")
-    print(f"PDF encontrados: {len(pdfs)}")
-
-    procesados = 0
-    revision = 0
-
-    for pdf in pdfs:
-        try:
-            with fitz.open(pdf) as doc:
-                paginas = doc.page_count
-        except Exception as e:
-            registrar_revision(lote_id, cliente, year, month, pdf, f"No se pudo abrir PDF: {e}")
-            print(f"[REVISION] No se pudo abrir: {pdf.name}")
-            revision += 1
-            continue
-
-        if paginas != 1:
-            continue
-
-        data = extraer_desde_nombre(pdf.name)
-
-        if not data["asiento"] or not data["serie"] or not data["numero"] or not data["ruc"]:
-            registrar_revision(
-                lote_id=lote_id,
-                cliente=cliente,
-                year=year,
-                month=month,
-                pdf=pdf,
-                motivo="Nombre no cumple formato de factura 1 página",
-            )
-            
-            registrar_revision(
-                lote_id=lote_id,
-                pdf=pdf,
-                motivo="Nombre no cumple formato de factura 1 página",
-            )
-
-            print(f"[REVISION] Nombre no cumple formato: {pdf.name}")
-            revision += 1
-            continue
-
-        nuevo_nombre = nombre_factura(cliente, data)
-        destino = salida / nuevo_nombre
-
-        hash_pdf = sha256_file(pdf)
-        origen_original = pdf
-
-        shutil.move(str(pdf), str(destino))
-
-        registrar_documento_extraido(
-            lote_id=lote_id,
-            data=data,
-            pdf_origen=origen_original,
-            pdf_destino=destino,
-        )
-
-        registrar_documento_agrupado_factura_1(
-            year=year,
-            month=month,
-            cliente=cliente,
-            data=data,
-            archivo_fuente=origen_original.name,
-            pdf_origen=origen_original,
-            pdf_destino=destino,
-            hash_sha256=hash_pdf,
-        )
-
-        procesados += 1
-        print(f"[FACTURA 1 PAG] {origen_original.name} -> {nuevo_nombre}")
-
-    with get_cursor(commit=True) as (_, cur):
-        cur.execute("""
-            UPDATE lotes_procesamiento
-            SET total_archivos = total_archivos + %s,
-                estado = 'procesado_parcial',
-                actualizado_en = NOW()
-            WHERE id = %s
-        """, (procesados, lote_id))
-
-    print(f"Procesados: {procesados}")
-    print(f"Revisión: {revision}")
+UPDATE documentos_extraidos
+SET asiento_contable = '04-0367',
+    nombre_final = '04-0367 BBTEC OTRO 04_0367_PI_20260107PE_ND00000018_SHENZHEN_TOOLS_INSTRUMENT_TECHNOLOGY_CO_LTD.pdf',
+    ruta_final = 'data/salida/2026/BBTEC/01/sin_oc/04-0367 BBTEC OTRO 04_0367_PI_20260107PE_ND00000018_SHENZHEN_TOOLS_INSTRUMENT_TECHNOLOGY_CO_LTD.pdf'
+WHERE id = 281;
