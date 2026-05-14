@@ -109,49 +109,30 @@ def crear_pdf(paginas: list[dict], output_pdf: Path):
 
 
 def construir_bloques(rows: list[dict]):
-    bloques = []
-    bloque_actual = []
-    clave_actual = None
-    asiento_actual = None
-    archivo_actual = None
-
-    contador_bloques = {}
+    grupos = {}
 
     for row in rows:
-        asiento = row["asiento_contable"]
-        archivo = row["archivo_fuente"]
-        clave = row["clave_documental"]
-
-        cambio = (
-            asiento != asiento_actual
-            or archivo != archivo_actual
-            or clave != clave_actual
+        key = (
+            row["asiento_contable"],
+            row["archivo_fuente"],
+            row["clave_documental"],
         )
 
-        if cambio and bloque_actual:
-            bloques.append(bloque_actual)
-            bloque_actual = []
-
-        bloque_actual.append(row)
-
-        asiento_actual = asiento
-        archivo_actual = archivo
-        clave_actual = clave
-
-    if bloque_actual:
-        bloques.append(bloque_actual)
+        grupos.setdefault(key, []).append(row)
 
     resultado = []
 
-    for bloque in bloques:
-        asiento = bloque[0]["asiento_contable"]
-        archivo = bloque[0]["archivo_fuente"]
-        clave = bloque[0]["clave_documental"]
+    for key, paginas in grupos.items():
+        paginas_ordenadas = sorted(paginas, key=lambda x: x["pagina"])
+        resultado.append((1, paginas_ordenadas))
 
-        k = (asiento, archivo, clave)
-        contador_bloques[k] = contador_bloques.get(k, 0) + 1
-
-        resultado.append((contador_bloques[k], bloque))
+    resultado.sort(
+        key=lambda item: (
+            item[1][0]["asiento_contable"],
+            item[1][0]["archivo_fuente"],
+            min(p["pagina"] for p in item[1]),
+        )
+    )
 
     return resultado
 

@@ -16,6 +16,46 @@ def marcar(page_id: int):
               AND clave_documental IS NOT NULL
         """, (page_id,))
 
+        with get_cursor(commit=True) as (_, cur):
+            cur.execute("""
+                INSERT INTO reglas_clasificacion_manual (
+                    cliente_abreviatura,
+                    archivo_fuente,
+                    pagina,
+                    tipo_detectado,
+                    clave_documental,
+                    serie,
+                    numero,
+                    ruc_emisor,
+                    razon_social_emisor,
+                    orden_compra,
+                    orden_servicio,
+                    banco_abreviatura,
+                    codigo_operacion
+                )
+                SELECT
+                    cliente_abreviatura,
+                    archivo_fuente,
+                    pagina,
+                    tipo_detectado,
+                    clave_documental,
+                    serie,
+                    numero,
+                    ruc_emisor,
+                    razon_social_emisor,
+                    orden_compra,
+                    orden_servicio,
+                    banco_abreviatura,
+                    codigo_operacion
+                FROM documentos_paginas
+                WHERE id = %s
+                ON CONFLICT (cliente_abreviatura, archivo_fuente, pagina)
+                DO UPDATE SET
+                    tipo_detectado = EXCLUDED.tipo_detectado,
+                    clave_documental = EXCLUDED.clave_documental,
+                    actualizado_en = NOW()
+            """, (page_id,))
+
         if cur.rowcount == 0:
             print(f"[NO ACTUALIZADO] ID {page_id}. Verifica que sea tipo_detectado='otro' y tenga clave_documental.")
             return
