@@ -1,13 +1,12 @@
-Sí. Revisando el repo, haría 3 mejoras puntuales antes de procesar el siguiente mes: el repo actual tiene procesar_facturas_1_pagina.py, separar_fragmentos.py, agrupar_fragmentos.py, distribuir_agrupados.py y scripts manuales separados, así que la mejora debe mantener esa arquitectura. �
-GitHub +3
-1. Crear tabla para no perder correcciones manuales
-Ejecuta una vez:
+Validé el repo. En GitHub separar_fragmentos.py aún no evita doble pipeline, y agrupar_fragmentos.py todavía agrupa por bloques consecutivos, no por misma clave dentro del asiento. �
+GitHub +1
+1. SQL: reglas_clasificacion_manual
 SQL
 CREATE TABLE IF NOT EXISTS reglas_clasificacion_manual (
     id SERIAL PRIMARY KEY,
     cliente_abreviatura VARCHAR(20) NOT NULL,
     archivo_fuente TEXT NOT NULL,
-    pagina INTEGER,
+    pagina INTEGER NOT NULL,
     tipo_detectado VARCHAR(50) NOT NULL,
     clave_documental TEXT NOT NULL,
     serie VARCHAR(30),
@@ -22,8 +21,190 @@ CREATE TABLE IF NOT EXISTS reglas_clasificacion_manual (
     actualizado_en TIMESTAMP DEFAULT NOW(),
     UNIQUE (cliente_abreviatura, archivo_fuente, pagina)
 );
-Así, si vuelves a limpiar enero, tus 33 decisiones manuales pueden reaplicarse.
-2. Nuevo archivo: app/aplicar_reglas_manuales.py
+2. Código final app/separar_fragmentos.py
+Python
+import argparse
+import re
+from pathlib import Path
+
+import fitz
+
+from core.db import get_cursor
+from core.ocr_runner import run_ocr
+from core.classifier import detect_tipo_documental
+
+BASE_TRABAJO = Path("data/trabajo")
+TMP_DIR = Path("storage/tmp/pages")
+
+
+def limpiar(txt: str) -> str:
+    return (txt or "").replace("\x00", "").replace("\u0000", "")
+
+
+def normalize(txt: str) -> str:
+    return re.sub(r"\s+", " ", limpiar(txt).upper()).strip()
+
+
+def extract_asiento(filename: str) -> str:
+    m = re.search(r"^(04-\d{4})", filename)
+    return m.group(1) if m else "SIN_ASIENTO"
+
+
+def split_page(source_pdf: Path, page_index: int, output_pdf: Path):
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+
+    with fitz.open(source_pdf) as src:
+        dst = fitz.open()
+        dst.insert_pdf(src, from_page=page_index, to_page=page_index)
+        dst.save(output_pdf)
+        dst.close()
+
+
+def extract_text(pdf_path: Path) -> str:
+    with fitz.open(pdf_path) as doc:
+        return "\n".join(page.get_text("text") for page in doc)
+
+
+def is_reverso_page(text: str) -> bool:
+    t = normalize(text)
+    return len(t) < 80 or ("USUARIO:" in t and len(t) < 300)
+
+
+def ya_procesado_como_extraido(cliente: str, year: int, month: int, nombre_archivo: str) -> bool:
+    """
+    Evita doble pipeline:
+    Si un PDF ya fue procesado como factura/otro de 1 página en documentos_extraidos,
+    no debe volver a separarse por páginas.
+    """
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT 1
+            FROM documentos_extraidos de
+            INNER JOIN lotes_procesamiento lp
+                ON lp.id = de.lote_id
+            WHERE lp.cliente_abreviatura = %s
+              AND lp.anio = %s
+              AND lp.mes = %s
+              AND de.nombre_provisional = %s
+              AND de.estado <> 'revision'
+            LIMIT 1
+        """, (cliente, year, month, nombre_archivo))
+
+        return cur.fetchone() is not None
+
+
+def process(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+    month_str = f"{month:02d}"
+
+    pendientes = BASE_TRABAJO / str(year) / cliente / month_str / "pendientes"
+    pdfs = sorted(pendientes.glob("*.pdf"))
+    tmp_dir = TMP_DIR / str(year) / cliente / month_str
+
+    print(f"Pendientes: {pendientes}")
+    print(f"PDF encontrados: {len(pdfs)}")
+
+    omitidos = 0
+    procesados = 0
+
+    for pdf in pdfs:
+        if ya_procesado_como_extraido(cliente, year, month, pdf.name):
+            print(f"[OMITIDO EXTRAIDO] {pdf.name}")
+            omitidos += 1
+            continue
+
+        asiento = extract_asiento(pdf.name)
+
+        try:
+            with fitz.open(pdf) as doc:
+                total_pages = doc.page_count
+        except Exception as exc:
+            print(f"[ERROR PDF] {pdf.name}: {exc}")
+            continue
+
+        print(f"\n[PDF] {pdf.name} ({total_pages} páginas)")
+
+        for idx in range(total_pages):
+            page_num = idx + 1
+
+            page_pdf = tmp_dir / f"{pdf.stem}_P{page_num}.pdf"
+            page_ocr = tmp_dir / f"{pdf.stem}_P{page_num}_OCR.pdf"
+
+            split_page(pdf, idx, page_pdf)
+
+            text = extract_text(page_pdf)
+            fuente = "pdf_text"
+
+            if not text.strip():
+                if run_ocr(page_pdf, page_ocr):
+                    text = extract_text(page_ocr)
+                    fuente = "ocr"
+
+            text_clean = limpiar(text)
+            tipo_aprox = detect_tipo_documental(normalize(text_clean), pdf.name)
+            reverso = is_reverso_page(text_clean)
+
+            print(
+                f"  Página {page_num}: "
+                f"tipo_aprox={tipo_aprox} reverso={reverso} fuente={fuente}"
+            )
+
+            with get_cursor(commit=True) as (_, cur):
+                cur.execute("""
+                    INSERT INTO documentos_paginas (
+                        cliente_abreviatura,
+                        anio,
+                        mes,
+                        asiento_contable,
+                        archivo_fuente,
+                        pagina,
+                        tipo_detectado,
+                        texto_extraido,
+                        fuente_texto,
+                        ruta_pagina_pdf,
+                        es_reverso,
+                        estado
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'separado')
+                    ON CONFLICT (cliente_abreviatura, anio, mes, archivo_fuente, pagina)
+                    DO UPDATE SET
+                        tipo_detectado = EXCLUDED.tipo_detectado,
+                        texto_extraido = EXCLUDED.texto_extraido,
+                        fuente_texto = EXCLUDED.fuente_texto,
+                        ruta_pagina_pdf = EXCLUDED.ruta_pagina_pdf,
+                        es_reverso = EXCLUDED.es_reverso,
+                        estado = 'separado'
+                """, (
+                    cliente,
+                    year,
+                    month,
+                    asiento,
+                    pdf.name,
+                    page_num,
+                    tipo_aprox,
+                    text_clean[:10000],
+                    fuente,
+                    str(page_pdf),
+                    reverso,
+                ))
+
+        procesados += 1
+
+    print("\nSeparación finalizada.")
+    print(f"Procesados: {procesados}")
+    print(f"Omitidos ya extraídos: {omitidos}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+
+    args = parser.parse_args()
+
+    process(args.year, args.cliente, args.month)
+3. Nuevo app/aplicar_reglas_manuales.py
 Python
 import argparse
 from core.db import get_cursor
@@ -58,7 +239,7 @@ def process(year: int, cliente: str, month: int):
               AND dp.mes = %s
         """, (cliente, year, month))
 
-        print(f"[OK] Reglas manuales aplicadas a páginas: {cur.rowcount}")
+        print(f"[OK] Reglas manuales aplicadas: {cur.rowcount}")
 
 
 if __name__ == "__main__":
@@ -66,107 +247,17 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
+
     args = parser.parse_args()
 
     process(args.year, args.cliente, args.month)
-3. Agregar guardado de regla manual en editar_pagina_manual.py
-Después del UPDATE documentos_paginas, agrega este bloque:
-Python
-with get_cursor(commit=True) as (_, cur):
-    cur.execute("""
-        INSERT INTO reglas_clasificacion_manual (
-            cliente_abreviatura,
-            archivo_fuente,
-            pagina,
-            tipo_detectado,
-            clave_documental,
-            serie,
-            numero,
-            ruc_emisor,
-            razon_social_emisor,
-            orden_compra,
-            orden_servicio,
-            banco_abreviatura,
-            codigo_operacion
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (cliente_abreviatura, archivo_fuente, pagina)
-        DO UPDATE SET
-            tipo_detectado = EXCLUDED.tipo_detectado,
-            clave_documental = EXCLUDED.clave_documental,
-            serie = EXCLUDED.serie,
-            numero = EXCLUDED.numero,
-            ruc_emisor = EXCLUDED.ruc_emisor,
-            razon_social_emisor = EXCLUDED.razon_social_emisor,
-            orden_compra = EXCLUDED.orden_compra,
-            orden_servicio = EXCLUDED.orden_servicio,
-            banco_abreviatura = EXCLUDED.banco_abreviatura,
-            codigo_operacion = EXCLUDED.codigo_operacion,
-            actualizado_en = NOW()
-    """, (
-        row["cliente_abreviatura"],
-        row["archivo_fuente"],
-        row["pagina"],
-        tipo,
-        clave,
-        serie,
-        numero,
-        ruc,
-        razon,
-        orden_compra,
-        orden_servicio,
-        banco,
-        codigo,
-    ))
-Ojo: para que esto funcione, leer_pagina() debe traer cliente_abreviatura.
-4. Agregar guardado de regla en marcar_otro_validado.py
-Después del UPDATE, agrega:
-Python
-with get_cursor(commit=True) as (_, cur):
-    cur.execute("""
-        INSERT INTO reglas_clasificacion_manual (
-            cliente_abreviatura,
-            archivo_fuente,
-            pagina,
-            tipo_detectado,
-            clave_documental,
-            serie,
-            numero,
-            ruc_emisor,
-            razon_social_emisor,
-            orden_compra,
-            orden_servicio,
-            banco_abreviatura,
-            codigo_operacion
-        )
-        SELECT
-            cliente_abreviatura,
-            archivo_fuente,
-            pagina,
-            tipo_detectado,
-            clave_documental,
-            serie,
-            numero,
-            ruc_emisor,
-            razon_social_emisor,
-            orden_compra,
-            orden_servicio,
-            banco_abreviatura,
-            codigo_operacion
-        FROM documentos_paginas
-        WHERE id = %s
-        ON CONFLICT (cliente_abreviatura, archivo_fuente, pagina)
-        DO UPDATE SET
-            tipo_detectado = EXCLUDED.tipo_detectado,
-            clave_documental = EXCLUDED.clave_documental,
-            actualizado_en = NOW()
-    """, (page_id,))
-5. Mejorar agrupación para no duplicar guía misma clave/mismo asiento
-En agrupar_fragmentos.py, tu construir_bloques() actual agrupa por cambios consecutivos de asiento + archivo + clave. Eso explica duplicados cuando la misma guía aparece en P1 y P4. �
-GitHub
-Reemplaza construir_bloques() por:
+4. Cambiar solo construir_bloques() en agrupar_fragmentos.py
 Python
 def construir_bloques(rows: list[dict]):
+    """
+    Agrupa por misma clave dentro del mismo asiento y archivo.
+    Evita duplicar guías/OC cuando aparecen en P1 y P4 del mismo PDF.
+    """
     grupos = {}
 
     for row in rows:
@@ -193,14 +284,52 @@ def construir_bloques(rows: list[dict]):
     )
 
     return resultado
-Esto reduce duplicados como:
+Tu SELECT actual en agrupar_fragmentos.py ya está bien porque solo toma estado='clasificado'.
+5. Tolerancia OC/OS
+En document_enricher.py, asegúrate de tener estas versiones:
+Python
+def extract_oc_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s*[:.\-]?\s*N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,20}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA[\s\S]{0,250}?N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"\bO\/C[^0-9]{0,20}0*(\d{3,8})",
+        r"\bOC[^0-9]{0,20}0*(\d{3,8})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Python
+def extract_os_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+SERVICIO\s*[:.\-]?\s*N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO\s+N[^0-9]{0,20}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO[\s\S]{0,250}?N[°ºO0*.:;”\"'\-]*\s*0*(\d{3,8})",
+        r"\bO\/S[^0-9]{0,20}0*(\d{3,8})",
+        r"\bOS[^0-9]{0,20}0*(\d{3,8})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+Con eso cubres:
 Plain text
-GUIA P001
-GUIA P004
-a un solo agrupado:
-Plain text
-paginas = 1,4
-Nuevo flujo recomendado
+Orden de Compra N*”:002968
+Orden de Compra N*:002968
+Orden de Servicio
+Nº:000221
+6. Orden correcto para el siguiente mes
 Bash
 python app/limpiar_lote.py --year 2026 --cliente BBTEC --month 2
 python app/copiar_trabajo.py --year 2026 --cliente BBTEC --month 2
@@ -210,11 +339,9 @@ python app/reporte_revision_extraidos.py --year 2026 --cliente BBTEC --month 2
 python app/separar_fragmentos.py --year 2026 --cliente BBTEC --month 2
 python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 2
 python app/procesar_qr_pendientes.py --year 2026 --cliente BBTEC --month 2
-
 python app/aplicar_reglas_manuales.py --year 2026 --cliente BBTEC --month 2
 python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 2
 
 python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 2
 python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 2
 python app/reporte_integridad_lote.py --year 2026 --cliente BBTEC --month 2
-Con esto, si vuelves a limpiar enero, ya no deberías repetir manualmente esos 33 casos.
