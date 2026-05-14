@@ -127,10 +127,10 @@ def extract_oc_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+COMPRA\s*[:.\-]?\s*N[°º*.:;\-]*\s*0*(\d{3,8})",
-        r"ORDEN\s+DE\s+COMPRA\s+N[°º*.:;\-]*\s*0*(\d{3,8})",
-        r"\bO\/C\s*[:.\-]*\s*0*(\d{3,8})",
-        r"\bOC\s*[:.\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA[^0-9]{0,25}0*(\d{3,8})",
+        r"\bO\/C[^0-9]{0,12}0*(\d{3,8})",
+        r"\bOC[^0-9]{0,12}0*(\d{3,8})",
     ]
 
     for pattern in patterns:
