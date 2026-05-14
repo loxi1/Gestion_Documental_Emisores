@@ -1,25 +1,51 @@
 import os
-import requests
+import re
+
 from dotenv import load_dotenv
 
 from core.db import get_cursor
+
+try:
+    import requests
+except Exception:
+    requests = None
 
 load_dotenv()
 
 APISPERU_TOKEN = os.getenv("APISPERU_TOKEN")
 
 
-def get_proveedor_by_ruc(ruc: str) -> dict | None:
+def normalize_text(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    value = re.sub(r"\s+", " ", value.strip())
+
+    return value.upper()
+
+
+def valid_ruc(ruc: str | None) -> bool:
     if not ruc:
+        return False
+
+    return bool(re.fullmatch(r"\d{11}", str(ruc)))
+
+
+def get_proveedor_by_ruc(ruc: str) -> dict | None:
+    if not valid_ruc(ruc):
         return None
 
     with get_cursor() as (_, cur):
         cur.execute("""
-            SELECT ruc, razon_social, direccion
+            SELECT
+                ruc,
+                razon_social,
+                direccion
             FROM proveedores
             WHERE ruc = %s
             LIMIT 1
         """, (ruc,))
+
         row = cur.fetchone()
 
     if not row:
@@ -33,38 +59,76 @@ def get_proveedor_by_ruc(ruc: str) -> dict | None:
 
 
 def fetch_proveedor_from_api(ruc: str) -> dict | None:
-    if not ruc or not APISPERU_TOKEN:
+    if not valid_ruc(ruc):
         return None
 
-    url = f"https://dniruc.apisperu.com/api/v1/ruc/{ruc}?token={APISPERU_TOKEN}"
+    if not APISPERU_TOKEN:
+        print("[APISPERU] token no configurado")
+        return None
+
+    if not requests:
+        print("[APISPERU] requests no instalado")
+        return None
+
+    url = f"https://dniruc.apisperu.com/api/v1/ruc/{ruc}"
 
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(
+            url,
+            params={"token": APISPERU_TOKEN},
+            timeout=15,
+        )
 
         if resp.status_code != 200:
+            print(f"[APISPERU] status={resp.status_code} ruc={ruc}")
             return None
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception:
+            print(f"[APISPERU] respuesta inválida ruc={ruc}")
+            return None
 
-        nombre = data.get("razonSocial")
+        nombre = normalize_text(data.get("razonSocial"))
 
         if not nombre:
+            print(f"[APISPERU] sin razon social ruc={ruc}")
             return None
 
-        return {
+        proveedor = {
             "ruc": data.get("ruc") or ruc,
             "nombre": nombre,
-            "direccion": data.get("direccion"),
+            "direccion": normalize_text(data.get("direccion")),
         }
 
+        print(f"[APISPERU] OK {ruc} -> {nombre}")
+
+        return proveedor
+
+    except requests.Timeout:
+        print(f"[APISPERU] timeout ruc={ruc}")
+        return None
+
     except Exception as exc:
-        print(f"[API RUC ERROR] ruc={ruc} error={exc}")
+        print(f"[APISPERU ERROR] ruc={ruc} error={exc}")
         return None
 
 
 def upsert_proveedor(proveedor: dict) -> dict | None:
-    if not proveedor or not proveedor.get("ruc"):
+    if not proveedor:
         return None
+
+    ruc = proveedor.get("ruc")
+
+    if not valid_ruc(ruc):
+        return None
+
+    nombre = normalize_text(proveedor.get("nombre"))
+
+    if not nombre:
+        return None
+
+    direccion = normalize_text(proveedor.get("direccion"))
 
     with get_cursor(commit=True) as (_, cur):
         cur.execute("""
@@ -77,13 +141,19 @@ def upsert_proveedor(proveedor: dict) -> dict | None:
             ON CONFLICT (ruc)
             DO UPDATE SET
                 razon_social = EXCLUDED.razon_social,
-                direccion = COALESCE(EXCLUDED.direccion, proveedores.direccion),
+                direccion = COALESCE(
+                    EXCLUDED.direccion,
+                    proveedores.direccion
+                ),
                 actualizado_en = NOW()
-            RETURNING ruc, razon_social, direccion
+            RETURNING
+                ruc,
+                razon_social,
+                direccion
         """, (
-            proveedor["ruc"],
-            proveedor.get("nombre"),
-            proveedor.get("direccion"),
+            ruc,
+            nombre,
+            direccion,
         ))
 
         row = cur.fetchone()
@@ -96,6 +166,9 @@ def upsert_proveedor(proveedor: dict) -> dict | None:
 
 
 def get_or_fetch_proveedor(ruc: str) -> dict | None:
+    if not valid_ruc(ruc):
+        return None
+
     proveedor = get_proveedor_by_ruc(ruc)
 
     if proveedor:
