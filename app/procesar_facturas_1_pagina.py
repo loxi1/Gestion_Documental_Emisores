@@ -230,7 +230,14 @@ def registrar_documento_agrupado_factura_1(
         ))
 
 
-def registrar_revision(lote_id: int, pdf: Path, motivo: str):
+def registrar_revision(
+    lote_id: int,
+    cliente: str,
+    year: int,
+    month: int,
+    pdf: Path,
+    motivo: str,
+):
     data = extraer_desde_nombre(pdf.name)
 
     with get_cursor(commit=True) as (_, cur):
@@ -252,10 +259,22 @@ def registrar_revision(lote_id: int, pdf: Path, motivo: str):
                 motivo_revision
             )
             VALUES (
-                %s, %s, 'otro', %s, %s, %s, %s, '1',
-                %s, %s, 'revision', 'filename',
-                TRUE, %s
+                %s,
+                %s,
+                'otro',
+                %s,
+                %s,
+                %s,
+                %s,
+                '1',
+                %s,
+                %s,
+                'revision',
+                'filename',
+                TRUE,
+                %s
             )
+            ON CONFLICT DO NOTHING
         """, (
             lote_id,
             data.get("asiento"),
@@ -267,6 +286,25 @@ def registrar_revision(lote_id: int, pdf: Path, motivo: str):
             str(pdf),
             motivo,
         ))
+
+    revision_dir = (
+        BASE_SALIDA
+        / str(year)
+        / cliente
+        / f"{month:02d}"
+        / "revision"
+    )
+
+    revision_dir.mkdir(parents=True, exist_ok=True)
+
+    destino = revision_dir / pdf.name
+
+    if pdf.exists() and pdf.resolve() != destino.resolve():
+        try:
+            shutil.copy2(pdf, destino)
+        except Exception as exc:
+            print(f"[WARN] No se pudo copiar a revision: {exc}")
+
 
 
 def procesar(year: int, cliente: str, month: int):
@@ -293,7 +331,14 @@ def procesar(year: int, cliente: str, month: int):
             with fitz.open(pdf) as doc:
                 paginas = doc.page_count
         except Exception as e:
-            registrar_revision(lote_id, cliente, year, month, pdf, f"No se pudo abrir PDF: {e}")
+            registrar_revision(
+                lote_id=lote_id,
+                cliente=cliente,
+                year=year,
+                month=month,
+                pdf=pdf,
+                motivo=f"No se pudo abrir PDF: {e}",
+            )
             print(f"[REVISION] No se pudo abrir: {pdf.name}")
             revision += 1
             continue
@@ -309,12 +354,6 @@ def procesar(year: int, cliente: str, month: int):
                 cliente=cliente,
                 year=year,
                 month=month,
-                pdf=pdf,
-                motivo="Nombre no cumple formato de factura 1 página",
-            )
-            
-            registrar_revision(
-                lote_id=lote_id,
                 pdf=pdf,
                 motivo="Nombre no cumple formato de factura 1 página",
             )
