@@ -63,7 +63,7 @@ def marcar(extraido_id: int):
         print(f"[ERROR] No existe archivo: {origen}")
         return
 
-    asiento = row["asiento_contable"] or "SIN_ASIENTO"
+    asiento = row["asiento_contable"] or extraer_asiento(row["nombre_provisional"])
     ref = clean(Path(row["nombre_provisional"] or origen.name).stem)
 
     destino_dir = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "sin_oc"
@@ -79,6 +79,19 @@ def marcar(extraido_id: int):
 
     if origen.resolve() != destino.resolve():
         shutil.move(str(origen), str(destino))
+
+    revision_copy = (
+        BASE_SALIDA
+        / str(year)
+        / cliente
+        / f"{month:02d}"
+        / "revision"
+        / Path(row["nombre_provisional"]).name
+    )
+
+    if revision_copy.exists():
+        revision_copy.unlink()
+        print(f"[REVISION LIMPIADA] {revision_copy}")
 
     clave = f"OTRO|{asiento}|{row['id']}"
 
@@ -136,6 +149,12 @@ def marcar(extraido_id: int):
         ))
 
     print(f"[OK] Extraído marcado como OTRO: {destino.name}")
+
+
+def extraer_asiento(nombre: str | None) -> str:
+    m = re.search(r"\b(04-\d{4})\b", nombre or "")
+    return m.group(1) if m else "SIN_ASIENTO"
+
 
 
 if __name__ == "__main__":

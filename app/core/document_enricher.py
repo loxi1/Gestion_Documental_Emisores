@@ -146,9 +146,10 @@ def extract_os_from_text(text: str) -> str | None:
 
     patterns = [
         r"ORDEN\s+DE\s+SERVICIO\s*[:.\-]?\s*N[°º*.:;\-]*\s*0*(\d{3,8})",
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*.:;\-]*\s*0*(\d{3,8})",
-        r"\bO\/S\s*[:.\-]*\s*0*(\d{3,8})",
-        r"\bOS\s*[:.\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO\s+N[^0-9]{0,20}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO[\s\S]{0,250}?N[°ºO0*.:;\-]*\s*0*(\d{3,8})",
+        r"\bO\/S[^0-9]{0,20}0*(\d{3,8})",
+        r"\bOS[^0-9]{0,20}0*(\d{3,8})",
     ]
 
     for pattern in patterns:
