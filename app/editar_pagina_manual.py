@@ -1,109 +1,209 @@
 import argparse
 
 from core.db import get_cursor
+from core.proveedor_service import get_or_fetch_proveedor
 
 
-def build_clave(tipo, ruc=None, serie=None, numero=None, oc=None, os=None, banco=None, codigo=None):
+TIPOS_VALIDOS = {
+    "factura",
+    "guia_remision",
+    "orden_compra",
+    "orden_servicio",
+    "nota_ingreso",
+    "pago_transferencia",
+    "pago_detraccion",
+    "otro",
+}
+
+
+def input_default(label: str, default=None) -> str | None:
+    texto = input(f"{label} [{default or ''}]: ").strip()
+    return texto if texto else default
+
+
+def build_clave(tipo, ruc=None, serie=None, numero=None, banco=None, codigo=None):
+    tipo = tipo.lower()
+
     if tipo == "factura":
-        if serie and numero and ruc:
-            return f"FACTURA|{ruc}|{serie}|{numero}"
+        return f"FACTURA|{ruc}|{serie}|{numero}"
 
     if tipo == "guia_remision":
-        if serie and numero:
-            return f"GUIA|{ruc or 'SINRUC'}|{serie}|{numero}"
+        return f"GUIA|{ruc}|{serie}|{numero}"
 
     if tipo == "orden_compra":
-        if oc:
-            return f"OC|{str(oc).zfill(6)}"
+        return f"OC|{numero}"
 
     if tipo == "orden_servicio":
-        if os:
-            return f"OS|{str(os).zfill(6)}"
+        return f"OS|{numero}"
 
     if tipo == "nota_ingreso":
-        if numero:
-            return f"NI|{str(numero).zfill(6)}"
+        return f"NI|{numero}"
 
     if tipo == "pago_transferencia":
-        if banco and codigo:
-            return f"PAGO_TRANSFERENCIA|{banco}|{codigo}"
+        return f"PAGO_TRANSFERENCIA|{banco or 'SIN_BANCO'}|{codigo or 'SIN_CODIGO'}"
 
     if tipo == "pago_detraccion":
         if ruc and serie and numero:
             return f"PAGO_DETRACCION|{ruc}|{serie}|{numero}"
-        if banco and codigo:
-            return f"PAGO_DETRACCION|{banco}|{codigo}"
+        return f"PAGO_DETRACCION|{banco or 'BN'}|{codigo or 'SIN_CODIGO'}"
 
-    return None
+    if tipo == "otro":
+        return f"OTRO|{codigo or 'SIN_CODIGO'}"
 
-
-def preguntar(label, actual=None):
-    valor = input(f"{label} [{actual or ''}]: ").strip()
-    return valor if valor else actual
+    raise ValueError(f"Tipo no soportado: {tipo}")
 
 
-def editar(id_pagina: int):
+def leer_pagina(page_id: int):
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT *
             FROM documentos_paginas
             WHERE id = %s
-        """, (id_pagina,))
-        row = cur.fetchone()
+        """, (page_id,))
+        return cur.fetchone()
+
+
+def resolver_proveedor(ruc: str | None, razon_actual: str | None) -> str | None:
+    if not ruc:
+        return razon_actual
+
+    if razon_actual and razon_actual.strip():
+        return razon_actual.strip()
+
+    proveedor = get_or_fetch_proveedor(ruc)
+
+    if proveedor and proveedor.get("nombre"):
+        print(f"[PROVEEDOR] {ruc} -> {proveedor['nombre']}")
+        return proveedor["nombre"]
+
+    print(f"[PROVEEDOR] No encontrado para RUC {ruc}")
+    return razon_actual
+
+
+def editar_interactivo(page_id: int):
+    row = leer_pagina(page_id)
 
     if not row:
-        print("No existe ese ID.")
+        print(f"[NO ENCONTRADO] Página ID {page_id}")
         return
 
-    print("\nDocumento encontrado:")
-    print(f"ID: {row['id']}")
-    print(f"Archivo: {row['archivo_fuente']}")
-    print(f"Página: {row['pagina']}")
-    print(f"Tipo actual: {row['tipo_detectado']}")
-    print(f"Clave actual: {row['clave_documental']}")
-    print(f"Ruta página: {row.get('ruta_pagina_pdf')}")
-    print()
+    print("=" * 100)
+    print(f"ID              : {row['id']}")
+    print(f"Asiento         : {row['asiento_contable']}")
+    print(f"Archivo fuente  : {row['archivo_fuente']}")
+    print(f"Página          : {row['pagina']}")
+    print(f"Tipo actual     : {row['tipo_detectado']}")
+    print(f"Serie actual    : {row['serie']}")
+    print(f"Número actual   : {row['numero']}")
+    print(f"RUC actual      : {row['ruc_emisor']}")
+    print(f"Razón actual    : {row['razon_social_emisor']}")
+    print(f"Clave actual    : {row['clave_documental']}")
+    print("=" * 100)
 
-    tipo = preguntar("Tipo", row["tipo_detectado"])
+    tipo = input_default("Tipo", row["tipo_detectado"] or "factura")
+    tipo = tipo.lower()
+
+    if tipo not in TIPOS_VALIDOS:
+        print(f"[ERROR] Tipo inválido: {tipo}")
+        print(f"Tipos válidos: {', '.join(sorted(TIPOS_VALIDOS))}")
+        return
 
     serie = row["serie"]
     numero = row["numero"]
     ruc = row["ruc_emisor"]
     razon = row["razon_social_emisor"]
-    oc = row["orden_compra"]
-    os = row["orden_servicio"]
+    orden_compra = row["orden_compra"]
+    orden_servicio = row["orden_servicio"]
+    banco = row["banco_abreviatura"]
+    codigo = row["codigo_operacion"]
 
     if tipo in ("factura", "guia_remision"):
-        serie = preguntar("Serie", serie)
-        numero = preguntar("Número", numero)
-        ruc = preguntar("RUC emisor", ruc)
+        serie = input_default("Serie", serie)
+        numero = input_default("Número", numero)
+        ruc = input_default("RUC emisor", ruc)
 
-        if tipo == "factura":
-            razon = preguntar("Razón social emisor", razon)
+        razon_default = resolver_proveedor(ruc, razon)
+        razon = input_default("Razón social emisor", razon_default)
 
     elif tipo == "orden_compra":
-        oc = preguntar("Número OC", oc)
+        numero = input_default("Número OC", orden_compra or numero)
+        orden_compra = numero
+        serie = None
+        ruc = None
+        razon = None
 
     elif tipo == "orden_servicio":
-        os = preguntar("Número OS", os)
+        numero = input_default("Número OS", orden_servicio or numero)
+        orden_servicio = numero
+        serie = None
+        ruc = None
+        razon = None
 
     elif tipo == "nota_ingreso":
-        numero = preguntar("Número Nota Ingreso", numero)
+        numero = input_default("Número NI", numero)
+        serie = None
+        ruc = None
+        razon = None
+
+    elif tipo == "pago_transferencia":
+        banco = input_default("Banco", banco or "SIN_BANCO")
+        codigo = input_default("Código operación", codigo or "SIN_CODIGO")
+        serie = None
+        numero = None
+        ruc = None
+        razon = None
+
+    elif tipo == "pago_detraccion":
+        usar_factura = input_default("¿Asociar a factura? s/n", "s")
+
+        if usar_factura.lower() == "s":
+            serie = input_default("Serie factura", serie)
+            numero = input_default("Número factura", numero)
+            ruc = input_default("RUC emisor", ruc)
+
+            razon_default = resolver_proveedor(ruc, razon)
+            razon = input_default("Razón social emisor", razon_default)
+
+            banco = "BN"
+            codigo = None
+        else:
+            banco = input_default("Banco", banco or "BN")
+            codigo = input_default("Código operación", codigo or "SIN_CODIGO")
+            serie = None
+            numero = None
+            ruc = None
+            razon = None
+
+    elif tipo == "otro":
+        codigo = input_default("Código/referencia", codigo or f"ID{page_id}")
+        serie = None
+        numero = None
+        ruc = None
+        razon = None
 
     clave = build_clave(
         tipo=tipo,
         ruc=ruc,
         serie=serie,
         numero=numero,
-        oc=oc,
-        os=os,
+        banco=banco,
+        codigo=codigo,
     )
 
-    print(f"\nNueva clave: {clave}")
-    confirmar = input("¿Guardar cambios? (s/n): ").strip().lower()
+    print("\nResumen:")
+    print(f"Tipo  : {tipo}")
+    print(f"Serie : {serie}")
+    print(f"Número: {numero}")
+    print(f"RUC   : {ruc}")
+    print(f"Razón : {razon}")
+    print(f"Banco : {banco}")
+    print(f"Código: {codigo}")
+    print(f"Clave : {clave}")
+
+    confirmar = input("\n¿Guardar cambios? s/n [s]: ").strip().lower() or "s"
 
     if confirmar != "s":
-        print("Cancelado.")
+        print("[CANCELADO]")
         return
 
     with get_cursor(commit=True) as (_, cur):
@@ -116,6 +216,8 @@ def editar(id_pagina: int):
                 razon_social_emisor = %s,
                 orden_compra = %s,
                 orden_servicio = %s,
+                banco_abreviatura = %s,
+                codigo_operacion = %s,
                 clave_documental = %s,
                 requiere_qr = FALSE,
                 qr_procesado = TRUE,
@@ -128,18 +230,21 @@ def editar(id_pagina: int):
             numero,
             ruc,
             razon,
-            oc,
-            os,
+            orden_compra,
+            orden_servicio,
+            banco,
+            codigo,
             clave,
-            id_pagina,
+            page_id,
         ))
 
-    print("Actualizado correctamente.")
+    print("\n[OK] Página actualizada correctamente.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", type=int, required=True)
+
     args = parser.parse_args()
 
-    editar(args.id)
+    editar_interactivo(args.id)

@@ -90,6 +90,16 @@ def parse_clave(clave: str) -> dict:
             "banco": parts[1] if len(parts) > 1 else "BN",
             "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
         }
+    
+    if parts[0] == "OTRO":
+        return {
+            "tipo": "OTRO",
+            "ruc": None,
+            "serie": None,
+            "numero": parts[1] if len(parts) > 1 else "SIN_ASIENTO",
+            "banco": None,
+            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
+        }
 
     return {
         "tipo": "OTRO",

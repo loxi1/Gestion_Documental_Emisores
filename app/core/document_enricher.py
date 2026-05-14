@@ -127,11 +127,10 @@ def extract_oc_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+COMPRA\s+N[°º*?:]?\s*:?\s*0*(\d{3,10})",
-        r"\bN[°º*?:]?\s*OC\s*:?\s*0*(\d{3,10})",
-        r"\bO\s*/\s*C\.?\s*:?\s*0*(\d{3,10})",
-        r"\bOC\s*:?\s*0*(\d{3,10})",
-        r"\bORD\.?\s+COMPRA\s*:?\s*0*(\d{3,10})",
+        r"ORDEN\s+DE\s+COMPRA\s*[:.\-]?\s*N[°º*.:;\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA\s+N[°º*.:;\-]*\s*0*(\d{3,8})",
+        r"\bO\/C\s*[:.\-]*\s*0*(\d{3,8})",
+        r"\bOC\s*[:.\-]*\s*0*(\d{3,8})",
     ]
 
     for pattern in patterns:
@@ -146,13 +145,14 @@ def extract_os_from_text(text: str) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
-        r"ORDEN\s+DE\s+SERVICIO\s*(?:\n|\s)+N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
-        r"ORDEN\s+DE\s+SERVICIO.{0,80}?N[°º*║?:]?\s*:?\s*0*(\d{3,6})\b",
+        r"ORDEN\s+DE\s+SERVICIO\s*[:.\-]?\s*N[°º*.:;\-]*\s*0*(\d{3,8})",
+        r"ORDEN\s+DE\s+SERVICIO\s+N[°º*.:;\-]*\s*0*(\d{3,8})",
+        r"\bO\/S\s*[:.\-]*\s*0*(\d{3,8})",
+        r"\bOS\s*[:.\-]*\s*0*(\d{3,8})",
     ]
 
     for pattern in patterns:
-        m = re.search(pattern, t, re.I | re.S)
+        m = re.search(pattern, t, re.I)
         if m:
             return m.group(1).zfill(6)
 
@@ -488,16 +488,39 @@ def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
     }
 
 
-def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> dict:
+def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pagina: int | None = None) -> dict:
     tipo = detect_tipo(text, archivo_fuente, cliente)
+
     oc_num = extract_oc_from_text(text)
     os_num = extract_os_from_text(text)
 
-    if os_num and not is_factura_text(text, archivo_fuente) and not is_guia_text(text, archivo_fuente):
-        tipo = "orden_servicio"
+    # Evitar que una factura/guía que menciona OC se convierta en OC
+    es_factura = is_factura_text(text, archivo_fuente)
+    es_guia = is_guia_text(text, archivo_fuente)
+    es_ni = is_nota_ingreso_text(text)
+    es_pago_transf = is_pago_transferencia_text(text)
+    es_pago_det = is_pago_detraccion_text(text)
 
-    elif tipo == "otro" and is_orden_compra_text(text, cliente):
+    # Regla nueva: si no es documento principal y tiene OC/OS, clasificarlo como OC/OS
+    if (
+        oc_num
+        and not es_factura
+        and not es_guia
+        and not es_ni
+        and not es_pago_transf
+        and not es_pago_det
+    ):
         tipo = "orden_compra"
+
+    elif (
+        os_num
+        and not es_factura
+        and not es_guia
+        and not es_ni
+        and not es_pago_transf
+        and not es_pago_det
+    ):
+        tipo = "orden_servicio"
 
     data = {
         "tipo": tipo,
@@ -528,7 +551,7 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "serie": f["serie"],
             "numero": f["numero"],
             "ruc": f["ruc"],
-            "razon_social_emisor": f["razon_social_emisor"],
+            "razon_social_emisor": f.get("razon_social_emisor"),
             "clave_documental": f["clave"],
         })
 
@@ -552,17 +575,29 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             })
 
     elif tipo == "orden_compra":
-        oc = extract_oc(text, cliente)
+        numero = oc_num
+
+        if not numero:
+            oc = extract_oc(text, cliente)
+            numero = oc["numero"]
+
         data.update({
-            "orden_compra": oc["numero"],
-            "clave_documental": oc["clave"],
+            "orden_compra": numero,
+            "numero": numero,
+            "clave_documental": f"OC|{numero}" if numero else None,
         })
 
     elif tipo == "orden_servicio":
-        os_data = extract_os(text, cliente)
+        numero = os_num
+
+        if not numero:
+            os_data = extract_os(text, cliente)
+            numero = os_data["numero"]
+
         data.update({
-            "orden_servicio": os_data["numero"],
-            "clave_documental": os_data["clave"],
+            "orden_servicio": numero,
+            "numero": numero,
+            "clave_documental": f"OS|{numero}" if numero else None,
         })
 
     elif tipo == "nota_ingreso":
@@ -590,6 +625,15 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
             "ruc": p["ruc"],
             "clave_documental": p["clave"],
         })
+    
+    if not data["clave_documental"]:
+        asiento = None
+
+        m = re.search(r"(04-\d{4})", archivo_fuente or "")
+        if m:
+            asiento = m.group(1)
+
+        data["clave_documental"] = f"OTRO|{asiento or 'SIN_ASIENTO'}|P{pagina or 0:03d}"
 
     return data
 
@@ -648,3 +692,22 @@ def is_guia_visual_text(text: str) -> bool:
     score = sum(1 for s in señales if s in t or compact_text(s) in c)
 
     return score >= 2
+
+
+def normalize_text(text: str) -> str:
+    text = text or ""
+
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+
+    text = text.upper()
+
+    text = re.sub(r"\s+", " ", text)
+
+    text = text.replace("0RDEN", "ORDEN")
+    text = text.replace("C0MPRA", "COMPRA")
+    text = text.replace("SERVICI0", "SERVICIO")
+
+    return text.strip()
+
+
