@@ -1,38 +1,8 @@
-Sí, tu resumen está correcto.
-Y sí: este regex reconoce ambos:
-Plain text
-Orden de Compra N*”:002968
-Orden de Compra N*:002968
-Orden de Compra Nº:002968
-Orden de Compra N°:002968
-Orden de Compra Nro:002968
-porque ignora cualquier símbolo entre N y el número:
-Python
-r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})"
-1. Cambio en document_enricher.py
-Reemplaza extract_oc_from_text() por:
-Python
-def extract_oc_from_text(text: str) -> str | None:
-    t = norm(text)
-
-    patterns = [
-        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})",
-        r"ORDEN\s+DE\s+COMPRA[^0-9]{0,25}0*(\d{3,8})",
-        r"\bO\/C[^0-9]{0,12}0*(\d{3,8})",
-        r"\bOC[^0-9]{0,12}0*(\d{3,8})",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            return m.group(1).zfill(6)
-
-    return None
-2. Crear app/reporte_revision_manual.py
+Sí. Revisé tu repo y procesar_facturas_1_pagina.py actualmente solo imprime [REVISION] cuando no reconoce nombre, pero no registra esos casos en BD; por eso conviene agregar estos 3 scripts y ajustar ese registro. �
+GitHub
+1. app/reporte_revision_extraidos.py
 Python
 import argparse
-from pathlib import Path
-
 from core.db import get_cursor
 
 
@@ -42,202 +12,463 @@ def process(year: int, cliente: str, month: int):
     with get_cursor() as (_, cur):
         cur.execute("""
             SELECT
-                id,
-                asiento_contable,
-                archivo_fuente,
-                pagina,
-                tipo_detectado,
-                clave_documental,
-                orden_compra,
-                orden_servicio,
-                ruc_emisor,
-                serie,
-                numero,
-                ruta_pagina_pdf
-            FROM documentos_paginas
-            WHERE cliente_abreviatura = %s
-              AND anio = %s
-              AND mes = %s
+                de.id,
+                de.asiento_contable,
+                de.tipo_documental,
+                de.serie,
+                de.numero,
+                de.ruc_emisor,
+                de.razon_social_emisor,
+                de.nombre_provisional,
+                de.ruta_provisional,
+                de.nombre_final,
+                de.ruta_final,
+                de.estado,
+                de.requiere_revision,
+                de.motivo_revision
+            FROM documentos_extraidos de
+            INNER JOIN lotes_procesamiento lp ON lp.id = de.lote_id
+            WHERE lp.cliente_abreviatura = %s
+              AND lp.anio = %s
+              AND lp.mes = %s
               AND (
-                    estado = 'revision_manual'
-                    OR tipo_detectado = 'otro'
+                    de.requiere_revision = TRUE
+                    OR de.estado = 'revision'
                   )
-            ORDER BY asiento_contable, pagina
+            ORDER BY de.asiento_contable, de.id
         """, (cliente, year, month))
 
         rows = cur.fetchall()
 
-    print(f"\nRegistros para revisar: {len(rows)}\n")
+    print(f"\nExtraídos en revisión: {len(rows)}\n")
 
     for row in rows:
-        ruta = Path(row["ruta_pagina_pdf"]).name if row["ruta_pagina_pdf"] else ""
-
-        print("=" * 120)
-        print(f"ID       : {row['id']}")
-        print(f"Asiento  : {row['asiento_contable']}")
-        print(f"Archivo  : {row['archivo_fuente']}")
-        print(f"Página   : {row['pagina']}")
-        print(f"Ruta     : {ruta}")
-        print(f"Tipo     : {row['tipo_detectado']}")
-        print(f"Clave    : {row['clave_documental']}")
-        print(f"OC       : {row['orden_compra']}")
-        print(f"OS       : {row['orden_servicio']}")
-        print(f"RUC      : {row['ruc_emisor']}")
-        print(f"Serie    : {row['serie']}")
-        print(f"Número   : {row['numero']}")
+        print("=" * 110)
+        print(f"ID        : {row['id']}")
+        print(f"Asiento   : {row['asiento_contable']}")
+        print(f"Tipo      : {row['tipo_documental']}")
+        print(f"Serie     : {row['serie']}")
+        print(f"Número    : {row['numero']}")
+        print(f"RUC       : {row['ruc_emisor']}")
+        print(f"Razón     : {row['razon_social_emisor']}")
+        print(f"Origen    : {row['nombre_provisional']}")
+        print(f"Ruta orig : {row['ruta_provisional']}")
+        print(f"Final     : {row['nombre_final']}")
+        print(f"Ruta final: {row['ruta_final']}")
+        print(f"Estado    : {row['estado']}")
+        print(f"Motivo    : {row['motivo_revision']}")
         print()
-        print(f"Editar   : python app/editar_pagina_manual.py --id {row['id']}")
-        print(f"Validar  : python app/marcar_otro_validado.py --id {row['id']}")
+        print(f"Editar    : python app/editar_extraido_manual.py --id {row['id']}")
+        print(f"Otro      : python app/marcar_extraido_otro.py --id {row['id']}")
 
     print("\nReporte finalizado.\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
-
     args = parser.parse_args()
 
     process(args.year, args.cliente, args.month)
-3. Crear app/marcar_otro_validado.py
+2. app/editar_extraido_manual.py
 Python
 import argparse
+import shutil
+from pathlib import Path
+
+from slugify import slugify
 
 from core.db import get_cursor
+from core.proveedor_service import get_or_fetch_proveedor
+
+BASE_SALIDA = Path("data/salida")
 
 
-def marcar(page_id: int):
+def clean(value: str | None) -> str:
+    return slugify(value or "SIN_RAZON_SOCIAL", separator="_").upper()
+
+
+def input_default(label: str, default=None):
+    value = input(f"{label} [{default or ''}]: ").strip()
+    return value if value else default
+
+
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+
+    base = path.with_suffix("")
+    ext = path.suffix
+    i = 2
+
+    while True:
+        new_path = Path(f"{base}_{i}{ext}")
+        if not new_path.exists():
+            return new_path
+        i += 1
+
+
+def leer_extraido(extraido_id: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT
+                de.*,
+                lp.cliente_abreviatura,
+                lp.anio,
+                lp.mes
+            FROM documentos_extraidos de
+            INNER JOIN lotes_procesamiento lp ON lp.id = de.lote_id
+            WHERE de.id = %s
+        """, (extraido_id,))
+        return cur.fetchone()
+
+
+def nombre_factura(cliente, asiento, serie, numero, ruc, razon):
+    return f"{asiento} {cliente} FACTURA {serie} {numero} {ruc} {clean(razon)}.pdf"
+
+
+def editar(extraido_id: int):
+    row = leer_extraido(extraido_id)
+
+    if not row:
+        print(f"[NO ENCONTRADO] ID {extraido_id}")
+        return
+
+    cliente = row["cliente_abreviatura"]
+    year = row["anio"]
+    month = row["mes"]
+
+    print("=" * 100)
+    print(f"ID        : {row['id']}")
+    print(f"Asiento   : {row['asiento_contable']}")
+    print(f"Archivo   : {row['nombre_provisional']}")
+    print(f"Ruta      : {row['ruta_provisional']}")
+    print(f"Tipo      : {row['tipo_documental']}")
+    print(f"Motivo    : {row['motivo_revision']}")
+    print("=" * 100)
+
+    tipo = input_default("Tipo", row["tipo_documental"] or "factura").lower()
+
+    if tipo != "factura":
+        print("[INFO] Para marcar como otro usa marcar_extraido_otro.py")
+        return
+
+    asiento = input_default("Asiento", row["asiento_contable"])
+    serie = input_default("Serie", row["serie"])
+    numero = input_default("Número", row["numero"])
+    ruc = input_default("RUC emisor", row["ruc_emisor"])
+
+    proveedor = get_or_fetch_proveedor(ruc) if ruc else None
+    razon_default = row["razon_social_emisor"] or (proveedor["nombre"] if proveedor else None)
+    razon = input_default("Razón social", razon_default)
+
+    origen = Path(row["ruta_provisional"])
+
+    if not origen.exists():
+        print(f"[ERROR] No existe archivo origen: {origen}")
+        return
+
+    destino_dir = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "sin_oc"
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    final_name = nombre_factura(cliente, asiento, serie, numero, ruc, razon)
+    destino = unique_path(destino_dir / final_name)
+
+    print("\nResumen:")
+    print(f"Origen : {origen}")
+    print(f"Destino: {destino}")
+
+    confirmar = input("\n¿Guardar y mover? s/n [s]: ").strip().lower() or "s"
+
+    if confirmar != "s":
+        print("[CANCELADO]")
+        return
+
+    shutil.move(str(origen), str(destino))
+
+    clave = f"FACTURA|{ruc}|{serie}|{numero}"
+
     with get_cursor(commit=True) as (_, cur):
         cur.execute("""
-            UPDATE documentos_paginas
-            SET estado = 'clasificado',
-                requiere_qr = FALSE,
-                qr_procesado = TRUE,
-                qr_error = NULL
+            UPDATE documentos_extraidos
+            SET asiento_contable = %s,
+                tipo_documental = 'factura',
+                serie = %s,
+                numero = %s,
+                ruc_emisor = %s,
+                razon_social_emisor = %s,
+                nombre_final = %s,
+                ruta_final = %s,
+                estado = 'procesado_sin_oc',
+                requiere_revision = FALSE,
+                motivo_revision = NULL,
+                actualizado_en = NOW()
             WHERE id = %s
-              AND tipo_detectado = 'otro'
-              AND clave_documental IS NOT NULL
-        """, (page_id,))
+        """, (
+            asiento,
+            serie,
+            numero,
+            ruc,
+            razon,
+            destino.name,
+            str(destino),
+            extraido_id,
+        ))
 
-        if cur.rowcount == 0:
-            print(f"[NO ACTUALIZADO] ID {page_id}. Verifica que sea tipo_detectado='otro' y tenga clave_documental.")
-            return
+        cur.execute("""
+            INSERT INTO documentos_agrupados (
+                asiento_contable,
+                archivo_fuente,
+                clave_documental,
+                tipo_documental,
+                serie,
+                numero,
+                pagina_inicio,
+                pagina_fin,
+                paginas,
+                nombre_archivo,
+                ruta_archivo,
+                ruta_final,
+                estado,
+                cliente_abreviatura,
+                anio,
+                mes,
+                origen
+            )
+            VALUES (
+                %s, %s, %s, 'FACTURA', %s, %s, 1, 1, '1',
+                %s, %s, %s, 'distribuido_sin_oc',
+                %s, %s, %s, 'factura_1_pagina_manual'
+            )
+            ON CONFLICT DO NOTHING
+        """, (
+            asiento,
+            row["nombre_provisional"],
+            clave,
+            serie,
+            numero,
+            destino.name,
+            str(destino),
+            str(destino),
+            cliente,
+            year,
+            month,
+        ))
 
-    print(f"[OK] Otro validado como clasificado. ID={page_id}")
+    print(f"[OK] Extraído actualizado como factura: {destino.name}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", type=int, required=True)
+    args = parser.parse_args()
 
+    editar(args.id)
+3. app/marcar_extraido_otro.py
+Python
+import argparse
+import shutil
+from pathlib import Path
+
+from slugify import slugify
+
+from core.db import get_cursor
+
+BASE_SALIDA = Path("data/salida")
+
+
+def clean(value: str | None) -> str:
+    return slugify(value or "SIN_DATO", separator="_").upper()
+
+
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+
+    base = path.with_suffix("")
+    ext = path.suffix
+    i = 2
+
+    while True:
+        new_path = Path(f"{base}_{i}{ext}")
+        if not new_path.exists():
+            return new_path
+        i += 1
+
+
+def leer_extraido(extraido_id: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT
+                de.*,
+                lp.cliente_abreviatura,
+                lp.anio,
+                lp.mes
+            FROM documentos_extraidos de
+            INNER JOIN lotes_procesamiento lp ON lp.id = de.lote_id
+            WHERE de.id = %s
+        """, (extraido_id,))
+        return cur.fetchone()
+
+
+def marcar(extraido_id: int):
+    row = leer_extraido(extraido_id)
+
+    if not row:
+        print(f"[NO ENCONTRADO] ID {extraido_id}")
+        return
+
+    cliente = row["cliente_abreviatura"]
+    year = row["anio"]
+    month = row["mes"]
+
+    origen = Path(row["ruta_provisional"])
+
+    if row["ruta_final"]:
+        origen = Path(row["ruta_final"])
+
+    if not origen.exists():
+        print(f"[ERROR] No existe archivo: {origen}")
+        return
+
+    asiento = row["asiento_contable"] or "SIN_ASIENTO"
+    ref = clean(Path(row["nombre_provisional"] or origen.name).stem)
+
+    destino_dir = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "sin_oc"
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    destino = unique_path(destino_dir / f"{asiento} {cliente} OTRO {ref}.pdf")
+
+    confirmar = input(f"¿Mover como OTRO?\n{origen}\n-> {destino}\ns/n [s]: ").strip().lower() or "s"
+
+    if confirmar != "s":
+        print("[CANCELADO]")
+        return
+
+    if origen.resolve() != destino.resolve():
+        shutil.move(str(origen), str(destino))
+
+    clave = f"OTRO|{asiento}|{row['id']}"
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_extraidos
+            SET tipo_documental = 'otro',
+                nombre_final = %s,
+                ruta_final = %s,
+                estado = 'procesado_sin_oc',
+                requiere_revision = FALSE,
+                motivo_revision = NULL,
+                actualizado_en = NOW()
+            WHERE id = %s
+        """, (
+            destino.name,
+            str(destino),
+            extraido_id,
+        ))
+
+        cur.execute("""
+            INSERT INTO documentos_agrupados (
+                asiento_contable,
+                archivo_fuente,
+                clave_documental,
+                tipo_documental,
+                pagina_inicio,
+                pagina_fin,
+                paginas,
+                nombre_archivo,
+                ruta_archivo,
+                ruta_final,
+                estado,
+                cliente_abreviatura,
+                anio,
+                mes,
+                origen
+            )
+            VALUES (
+                %s, %s, %s, 'OTRO', 1, 1, '1',
+                %s, %s, %s, 'distribuido_sin_oc',
+                %s, %s, %s, 'extraido_1_pagina_manual'
+            )
+            ON CONFLICT DO NOTHING
+        """, (
+            asiento,
+            row["nombre_provisional"],
+            clave,
+            destino.name,
+            str(destino),
+            str(destino),
+            cliente,
+            year,
+            month,
+        ))
+
+    print(f"[OK] Extraído marcado como OTRO: {destino.name}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--id", type=int, required=True)
     args = parser.parse_args()
 
     marcar(args.id)
-4. Flujo correcto
-Bash
-python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
-
-python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 1
-Si realmente es otro:
-Bash
-python app/marcar_otro_validado.py --id 123
-Si está mal clasificado:
-Bash
-python app/editar_pagina_manual.py --id 123
-Luego:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
-5. Sobre varios OTRO
-No deberían chocarse porque tu clave queda así:
-Plain text
-OTRO|04-0197|P003
-OTRO|04-0197|P004
-OTRO|04-0197|P005
-y el nombre provisional queda con página:
-Plain text
-04-0197 OTRO P003-P003.pdf
-04-0197 OTRO P004-P004.pdf
-Si hay varios soportes, se diferencian por página. Luego unique_path() en distribuir_agrupados.py evita sobrescritura con _2, _3, etc.
-
-
-Sí. Mi recomendación es separar “clasificado automático” de “validado manualmente”.
-Flujo recomendado después de clasificar_paginas.py
-Revisar solo estos casos:
-SQL
-SELECT id, asiento_contable, pagina, tipo_detectado, clave_documental, ruta_pagina_pdf
-FROM documentos_paginas
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=1
-  AND tipo_detectado='otro'
-ORDER BY asiento_contable, pagina;
-Si realmente es otro, marcarlo como validado:
-SQL
-UPDATE documentos_paginas
-SET estado='clasificado'
-WHERE id = 123;
-Si no es otro, usar:
-Bash
-python app/editar_pagina_manual.py --id 123
-y corregirlo como:
-Plain text
-factura
-guia_remision
-orden_compra
-orden_servicio
-nota_ingreso
-pago_transferencia
-pago_detraccion
-otro
-Regla importante
-Sí: un OTRO debe agruparse y distribuirse si el asiento ya tiene al menos una factura, guía, OC, OS o nota de ingreso.
-Ejemplo:
-Plain text
-04-0197
-- factura
-- OS
-- otros soportes
-Entonces esos OTRO deben ir a con_oc como soporte, porque el asiento ya tiene OS. Tu tabla muestra que distribuir_agrupados.py ya mueve los archivos finales a con_oc o sin_oc, dejando ruta_final como ubicación real. �
-Pasted text (4).txt
-Mejora para Orden de Compra N*”:002968
-En document_enricher.py, mejora el regex de OC así:
+Cambio recomendado en procesar_facturas_1_pagina.py
+Cuando no cumple formato, en vez de solo:
 Python
-def extract_oc_from_text(text: str) -> str | None:
-    t = norm(text)
+print(f"[REVISION] Nombre no cumple formato: {pdf.name}")
+continue
+registra en documentos_extraidos:
+Python
+registrar_revision(
+    lote_id=lote_id,
+    pdf=pdf,
+    motivo="Nombre no cumple formato de factura 1 página",
+)
+print(f"[REVISION] Nombre no cumple formato: {pdf.name}")
+continue
+y agrega esta función:
+Python
+def registrar_revision(lote_id: int, pdf: Path, motivo: str):
+    data = extraer_desde_nombre(pdf.name)
 
-    patterns = [
-        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})",
-        r"ORDEN\s+DE\s+COMPRA[^0-9]{0,20}0*(\d{3,8})",
-        r"\bO\/C[^0-9]{0,12}0*(\d{3,8})",
-        r"\bOC[^0-9]{0,12}0*(\d{3,8})",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            return m.group(1).zfill(6)
-
-    return None
-Eso debe capturar textos OCR raros como:
-Plain text
-Orden de Compra N*”:002968
-Mejora para distribuir OTRO
-En distribuir_agrupados.py, la lógica debe ser:
-Plain text
-Si asiento tiene OC/OS -> todo el asiento va a con_oc
-Si no tiene OC/OS -> va a sin_oc
-Incluyendo OTRO.
-Así no se pierden soportes, recibos, proformas o anexos. Los documentos OTRO correctos quedan trazados como soporte.
-Mi recomendación final
-No intentes clasificar todo perfecto. Haz esto:
-Plain text
-factura / guía / OC / OS / nota ingreso / pagos = obligatorio clasificar bien
-proforma / recibos / pasajes / anexos raros = OTRO validado
-Luego creamos un reporte:
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO documentos_extraidos (
+                lote_id,
+                asiento_contable,
+                tipo_documental,
+                serie,
+                numero,
+                ruc_emisor,
+                razon_social_emisor,
+                paginas,
+                nombre_provisional,
+                ruta_provisional,
+                estado,
+                fuente_datos,
+                requiere_revision,
+                motivo_revision
+            )
+            VALUES (
+                %s, %s, 'otro', %s, %s, %s, %s, '1',
+                %s, %s, 'revision', 'filename',
+                TRUE, %s
+            )
+        """, (
+            lote_id,
+            data.get("asiento"),
+            data.get("serie"),
+            data.get("numero"),
+            data.get("ruc"),
+            data.get("razon"),
+            pdf.name,
+            str(pdf),
+            motivo,
+        ))
+Flujo:
 Bash
-python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 1
-para listar solo los OTRO antes de agrupar.
+python app/reporte_revision_extraidos.py --year 2026 --cliente BBTEC --month 1
+python app/editar_extraido_manual.py --id X
+python app/marcar_extraido_otro.py --id X
