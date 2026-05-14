@@ -9,106 +9,36 @@ BASE_SALIDA = Path("data/salida")
 
 
 def parse_clave(clave: str) -> dict:
-    parts = clave.split("|")
+    parts = (clave or "OTRO|SIN_ASIENTO|SIN_CODIGO").split("|")
+    tipo = parts[0]
 
-    if parts[0] == "FACTURA":
-        return {
-            "tipo": "FACTURA",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-            "banco": None,
-            "codigo": None,
-        }
+    if tipo == "FACTURA" and len(parts) >= 4:
+        return {"tipo": "FACTURA", "ruc": parts[1], "serie": parts[2], "numero": parts[3], "banco": None, "codigo": None}
 
-    if parts[0] == "GUIA":
-        return {
-            "tipo": "GUIA_REMISION",
-            "ruc": parts[1],
-            "serie": parts[2],
-            "numero": parts[3],
-            "banco": None,
-            "codigo": None,
-        }
+    if tipo == "GUIA" and len(parts) >= 4:
+        return {"tipo": "GUIA_REMISION", "ruc": parts[1], "serie": parts[2], "numero": parts[3], "banco": None, "codigo": None}
 
-    if parts[0] == "OC":
-        return {
-            "tipo": "OC",
-            "ruc": None,
-            "serie": None,
-            "numero": parts[1],
-            "banco": None,
-            "codigo": None,
-        }
+    if tipo == "OC":
+        return {"tipo": "OC", "ruc": None, "serie": None, "numero": parts[1] if len(parts) > 1 else "SIN_OC", "banco": None, "codigo": None}
 
-    if parts[0] == "OS":
-        return {
-            "tipo": "OS",
-            "ruc": None,
-            "serie": None,
-            "numero": parts[1],
-            "banco": None,
-            "codigo": None,
-        }
+    if tipo == "OS":
+        return {"tipo": "OS", "ruc": None, "serie": None, "numero": parts[1] if len(parts) > 1 else "SIN_OS", "banco": None, "codigo": None}
 
-    if parts[0] == "NI":
-        return {
-            "tipo": "NOTA_INGRESO",
-            "ruc": None,
-            "serie": None,
-            "numero": parts[1],
-            "banco": None,
-            "codigo": None,
-        }
+    if tipo == "NI":
+        return {"tipo": "NOTA_INGRESO", "ruc": None, "serie": None, "numero": parts[1] if len(parts) > 1 else "SIN_NI", "banco": None, "codigo": None}
 
-    if parts[0] == "PAGO_TRANSFERENCIA":
-        return {
-            "tipo": "PAGO_TRANSFERENCIA",
-            "ruc": None,
-            "serie": None,
-            "numero": None,
-            "banco": parts[1] if len(parts) > 1 else "SIN_BANCO",
-            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
-        }
+    if tipo == "PAGO_TRANSFERENCIA":
+        return {"tipo": "PAGO_TRANSFERENCIA", "ruc": None, "serie": None, "numero": None, "banco": parts[1] if len(parts) > 1 else "SIN_BANCO", "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO"}
 
-    if parts[0] == "PAGO_DETRACCION":
+    if tipo == "PAGO_DETRACCION":
         if len(parts) >= 4:
-            return {
-                "tipo": "PAGO_DETRACCION",
-                "ruc": parts[1],
-                "serie": parts[2],
-                "numero": parts[3],
-                "banco": "BN",
-                "codigo": None,
-            }
+            return {"tipo": "PAGO_DETRACCION", "ruc": parts[1], "serie": parts[2], "numero": parts[3], "banco": "BN", "codigo": None}
+        return {"tipo": "PAGO_DETRACCION", "ruc": None, "serie": None, "numero": None, "banco": parts[1] if len(parts) > 1 else "BN", "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO"}
 
-        return {
-            "tipo": "PAGO_DETRACCION",
-            "ruc": None,
-            "serie": None,
-            "numero": None,
-            "banco": parts[1] if len(parts) > 1 else "BN",
-            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
-        }
-    
-    if parts[0] == "OTRO":
-        return {
-            "tipo": "OTRO",
-            "ruc": None,
-            "serie": None,
-            "numero": parts[1] if len(parts) > 1 else "SIN_ASIENTO",
-            "banco": None,
-            "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO",
-        }
+    if tipo == "OTRO":
+        return {"tipo": "OTRO", "ruc": None, "serie": None, "numero": parts[1] if len(parts) > 1 else "SIN_ASIENTO", "banco": None, "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO"}
 
-    return {
-        "tipo": "OTRO",
-        "ruc": None,
-        "serie": None,
-        "numero": None,
-        "banco": None,
-        "codigo": None,
-    }
+    return {"tipo": "OTRO", "ruc": None, "serie": None, "numero": "SIN_ASIENTO", "banco": None, "codigo": "SIN_CODIGO"}
 
 
 def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) -> str:
