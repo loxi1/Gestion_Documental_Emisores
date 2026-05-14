@@ -1,3 +1,169 @@
+Sí, tu resumen está correcto.
+Y sí: este regex reconoce ambos:
+Plain text
+Orden de Compra N*”:002968
+Orden de Compra N*:002968
+Orden de Compra Nº:002968
+Orden de Compra N°:002968
+Orden de Compra Nro:002968
+porque ignora cualquier símbolo entre N y el número:
+Python
+r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})"
+1. Cambio en document_enricher.py
+Reemplaza extract_oc_from_text() por:
+Python
+def extract_oc_from_text(text: str) -> str | None:
+    t = norm(text)
+
+    patterns = [
+        r"ORDEN\s+DE\s+COMPRA\s+N[^0-9]{0,12}0*(\d{3,8})",
+        r"ORDEN\s+DE\s+COMPRA[^0-9]{0,25}0*(\d{3,8})",
+        r"\bO\/C[^0-9]{0,12}0*(\d{3,8})",
+        r"\bOC[^0-9]{0,12}0*(\d{3,8})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            return m.group(1).zfill(6)
+
+    return None
+2. Crear app/reporte_revision_manual.py
+Python
+import argparse
+from pathlib import Path
+
+from core.db import get_cursor
+
+
+def process(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT
+                id,
+                asiento_contable,
+                archivo_fuente,
+                pagina,
+                tipo_detectado,
+                clave_documental,
+                orden_compra,
+                orden_servicio,
+                ruc_emisor,
+                serie,
+                numero,
+                ruta_pagina_pdf
+            FROM documentos_paginas
+            WHERE cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+              AND (
+                    estado = 'revision_manual'
+                    OR tipo_detectado = 'otro'
+                  )
+            ORDER BY asiento_contable, pagina
+        """, (cliente, year, month))
+
+        rows = cur.fetchall()
+
+    print(f"\nRegistros para revisar: {len(rows)}\n")
+
+    for row in rows:
+        ruta = Path(row["ruta_pagina_pdf"]).name if row["ruta_pagina_pdf"] else ""
+
+        print("=" * 120)
+        print(f"ID       : {row['id']}")
+        print(f"Asiento  : {row['asiento_contable']}")
+        print(f"Archivo  : {row['archivo_fuente']}")
+        print(f"Página   : {row['pagina']}")
+        print(f"Ruta     : {ruta}")
+        print(f"Tipo     : {row['tipo_detectado']}")
+        print(f"Clave    : {row['clave_documental']}")
+        print(f"OC       : {row['orden_compra']}")
+        print(f"OS       : {row['orden_servicio']}")
+        print(f"RUC      : {row['ruc_emisor']}")
+        print(f"Serie    : {row['serie']}")
+        print(f"Número   : {row['numero']}")
+        print()
+        print(f"Editar   : python app/editar_pagina_manual.py --id {row['id']}")
+        print(f"Validar  : python app/marcar_otro_validado.py --id {row['id']}")
+
+    print("\nReporte finalizado.\n")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+
+    args = parser.parse_args()
+
+    process(args.year, args.cliente, args.month)
+3. Crear app/marcar_otro_validado.py
+Python
+import argparse
+
+from core.db import get_cursor
+
+
+def marcar(page_id: int):
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_paginas
+            SET estado = 'clasificado',
+                requiere_qr = FALSE,
+                qr_procesado = TRUE,
+                qr_error = NULL
+            WHERE id = %s
+              AND tipo_detectado = 'otro'
+              AND clave_documental IS NOT NULL
+        """, (page_id,))
+
+        if cur.rowcount == 0:
+            print(f"[NO ACTUALIZADO] ID {page_id}. Verifica que sea tipo_detectado='otro' y tenga clave_documental.")
+            return
+
+    print(f"[OK] Otro validado como clasificado. ID={page_id}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--id", type=int, required=True)
+
+    args = parser.parse_args()
+
+    marcar(args.id)
+4. Flujo correcto
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente BBTEC --month 1
+
+python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 1
+Si realmente es otro:
+Bash
+python app/marcar_otro_validado.py --id 123
+Si está mal clasificado:
+Bash
+python app/editar_pagina_manual.py --id 123
+Luego:
+Bash
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 1
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 1
+5. Sobre varios OTRO
+No deberían chocarse porque tu clave queda así:
+Plain text
+OTRO|04-0197|P003
+OTRO|04-0197|P004
+OTRO|04-0197|P005
+y el nombre provisional queda con página:
+Plain text
+04-0197 OTRO P003-P003.pdf
+04-0197 OTRO P004-P004.pdf
+Si hay varios soportes, se diferencian por página. Luego unique_path() en distribuir_agrupados.py evita sobrescritura con _2, _3, etc.
+
+
 Sí. Mi recomendación es separar “clasificado automático” de “validado manualmente”.
 Flujo recomendado después de clasificar_paginas.py
 Revisar solo estos casos:
