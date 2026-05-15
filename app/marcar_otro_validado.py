@@ -1,6 +1,7 @@
 import argparse
-
-from core.db import get_cursor
+import re
+import shutil
+from pathlib import Path
 
 
 def marcar(page_id: int):
