@@ -1,96 +1,121 @@
-Sí. Crea un archivo independiente para pruebas, sin tocar tu pipeline.
-app/debug_leer_qr_pdf.py
+Sí. Para continuar sin perder ediciones manuales, haz mínimo impacto:
+1. No toques documentos_agrupados.estado
+Déjalo así:
+Plain text
+agrupado
+distribuido_con_oc
+distribuido_sin_oc
+revision
+2. Usa documentos_paginas.estado para no reagrupar
+Ejecuta esto primero para marcar como agrupadas las páginas que ya tienen agrupado creado:
+SQL
+UPDATE documentos_paginas dp
+SET estado = 'agrupado'
+WHERE dp.cliente_abreviatura = 'BBTEC'
+  AND dp.anio = 2026
+  AND dp.mes = 4
+  AND dp.estado = 'clasificado'
+  AND EXISTS (
+      SELECT 1
+      FROM documentos_agrupados da
+      WHERE da.cliente_abreviatura = dp.cliente_abreviatura
+        AND da.anio = dp.anio
+        AND da.mes = dp.mes
+        AND da.asiento_contable = dp.asiento_contable
+        AND da.archivo_fuente = dp.archivo_fuente
+        AND da.clave_documental = dp.clave_documental
+        AND da.origen = 'fragmentos'
+  );
+Así agrupar_fragmentos.py ya no reprocesa lo anterior.
+3. Cambia agrupar_fragmentos.py
+Después del INSERT INTO documentos_agrupados, agrega:
 Python
-import argparse
-from pathlib import Path
+page_ids = [p["id"] for p in paginas_ordenadas]
 
-from core.qr_utils import decode_qr_from_pdf_pro
-from core.qr_parser import parse_qr_payload
+cur.execute("""
+    UPDATE documentos_paginas
+    SET estado = 'agrupado'
+    WHERE id = ANY(%s)
+""", (page_ids,))
+Tu SELECT debe quedarse así:
+SQL
+WHERE estado = 'clasificado'
+  AND clave_documental IS NOT NULL
+Con eso el agrupado será incremental.
+4. Arreglar correlativo de preclasificar_sin_nombre.py
+En get_max_asiento(), usa esta consulta más directa:
+Python
+def get_max_asiento(cliente: str, year: int, month: int) -> int:
+    month_prefix = f"{month:02d}-"
 
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT COALESCE(MAX(num), 0) AS max_num
+            FROM (
+                SELECT CAST(SUBSTRING(asiento_contable FROM '\\d{2}-(\\d{4})') AS INTEGER) AS num
+                FROM documentos_agrupados
+                WHERE cliente_abreviatura = %s
+                  AND anio = %s
+                  AND mes = %s
+                  AND asiento_contable LIKE %s
 
-def main(pdf_path: str, debug: bool):
-    path = Path(pdf_path)
+                UNION ALL
 
-    if not path.exists():
-        print(f"[ERROR] No existe archivo: {path}")
-        return
+                SELECT CAST(SUBSTRING(asiento_generado FROM '\\d{2}-(\\d{4})') AS INTEGER) AS num
+                FROM archivos_preclasificados
+                WHERE cliente_abreviatura = %s
+                  AND anio = %s
+                  AND mes = %s
+                  AND asiento_generado LIKE %s
+            ) x
+        """, (
+            cliente, year, month, f"{month_prefix}%",
+            cliente, year, month, f"{month_prefix}%",
+        ))
 
-    debug_dir = None
+        row = cur.fetchone()
 
-    if debug:
-        debug_dir = Path("storage/tmp/qr_debug/manual") / path.stem
-        debug_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"PDF: {path}")
-    print("Leyendo QR...")
-
-    raws = decode_qr_from_pdf_pro(
-        pdf_path=path,
-        max_pages=1,
-        dpi=420,
-        debug_dir=debug_dir,
-        debug=debug,
-    )
-
-    if not raws:
-        print("[NO DETECTADO] No se pudo leer QR.")
-        if debug_dir:
-            print(f"Debug generado en: {debug_dir}")
-        return
-
-    print(f"\nQR detectados: {len(raws)}\n")
-
-    for i, raw in enumerate(raws, start=1):
-        print("=" * 100)
-        print(f"QR #{i}")
-        print(f"RAW:")
-        print(raw)
-
-        parsed = parse_qr_payload(raw)
-
-        print("\nPARSED:")
-        for k, v in parsed.items():
-            print(f"{k}: {v}")
-
-    if debug_dir:
-        print(f"\nDebug generado en: {debug_dir}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--pdf",
-        required=True,
-        help="Ruta del PDF a leer",
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Guarda imágenes intermedias de debug",
-    )
-
-    args = parser.parse_args()
-
-    main(
-        pdf_path=args.pdf,
-        debug=args.debug,
-    )
-Ejecuta exactamente así:
+    return int(row["max_num"] or 0)
+Esto hace:
+Plain text
+1. mira lo ya distribuido/agrupado
+2. mira lo ya preclasificado
+3. continúa desde el mayor
+5. Para tu caso actual
+Como hasta id=1831 era correcto y el último asiento fue 04-0275, los nuevos deben comenzar desde:
+Plain text
+04-0276
+Valida si los preclasificados están bien:
+SQL
+SELECT asiento_generado, nombre_original, nombre_generado
+FROM archivos_preclasificados
+WHERE cliente_abreviatura='BBTEC'
+  AND anio=2026
+  AND mes=4
+ORDER BY asiento_generado
+LIMIT 20;
+Si ya empiezan en 04-0276, no corrijas nada.
+Ahora solo ejecuta:
+SQL
+UPDATE documentos_paginas dp
+SET estado = 'agrupado'
+WHERE dp.cliente_abreviatura = 'BBTEC'
+  AND dp.anio = 2026
+  AND dp.mes = 4
+  AND dp.estado = 'clasificado'
+  AND EXISTS (
+      SELECT 1
+      FROM documentos_agrupados da
+      WHERE da.cliente_abreviatura = dp.cliente_abreviatura
+        AND da.anio = dp.anio
+        AND da.mes = dp.mes
+        AND da.asiento_contable = dp.asiento_contable
+        AND da.archivo_fuente = dp.archivo_fuente
+        AND da.clave_documental = dp.clave_documental
+        AND da.origen = 'fragmentos'
+  );
+Luego sigue:
 Bash
-python app/debug_leer_qr_pdf.py \
-  --pdf "storage/tmp/pages/2026/BBTEC/04/04-0311 BBTEC SIN_NOMBRE 20260504130358769_P1.pdf" \
-  --debug
-Si lo lee, te mostrará:
-Plain text
-ruc_emisor
-tipo_documental
-serie
-numero
-igv
-importe
-fecha_emision
-Si no lo lee, revisa las imágenes generadas en:
-Plain text
-storage/tmp/qr_debug/manual/
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
+Así no vuelves a editar manualmente los OTRO que ya corregiste.
