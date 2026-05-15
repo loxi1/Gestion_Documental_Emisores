@@ -133,14 +133,14 @@ def obtener_control_por_asiento(cliente: str, year: int, month: int) -> dict:
         for row in cur.fetchall():
             asiento = row["asiento_contable"]
 
-            if asiento in controles:
-                continue
-
+            # OS tiene prioridad sobre OC
             if row["tipo_detectado"] == "orden_servicio" and row["orden_servicio"]:
                 controles[asiento] = ("OS", str(row["orden_servicio"]).zfill(6))
+                continue
 
-            elif row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
-                controles[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
+            if asiento not in controles:
+                if row["tipo_detectado"] == "orden_compra" and row["orden_compra"]:
+                    controles[asiento] = ("OC", str(row["orden_compra"]).zfill(6))
 
         return controles
 
