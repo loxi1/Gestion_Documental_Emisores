@@ -1,13 +1,12 @@
 import argparse
+import re
 import shutil
 from pathlib import Path
 
-from slugify import slugify
-
 from core.db import get_cursor
 
-BASE_SALIDA = Path("data/salida")
 
+print("USANDO ARCHIVO CORRECTO")
 
 def clean(value: str | None) -> str:
     return slugify(value or "SIN_DATO", separator="_").upper()
@@ -151,10 +150,13 @@ def marcar(extraido_id: int):
     print(f"[OK] Extraído marcado como OTRO: {destino.name}")
 
 
-def extraer_asiento(nombre: str | None) -> str:
+def extraer_asiento(nombre: str) -> str:
     m = re.search(r"\b(04-\d{4})\b", nombre or "")
-    return m.group(1) if m else "SIN_ASIENTO"
 
+    if m:
+        return m.group(1)
+
+    return "SIN_ASIENTO"
 
 
 if __name__ == "__main__":
