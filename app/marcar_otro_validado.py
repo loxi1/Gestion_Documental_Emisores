@@ -16,7 +16,13 @@ def marcar(page_id: int):
               AND clave_documental IS NOT NULL
         """, (page_id,))
 
-        with get_cursor(commit=True) as (_, cur):
+        if cur.rowcount == 0:
+            print(
+                f"[NO ACTUALIZADO] ID {page_id}. "
+                "Verifica que sea tipo_detectado='otro' y tenga clave_documental."
+            )
+            return
+
         cur.execute("""
             INSERT INTO reglas_clasificacion_manual (
                 cliente_abreviatura,
@@ -53,12 +59,16 @@ def marcar(page_id: int):
             DO UPDATE SET
                 tipo_detectado = EXCLUDED.tipo_detectado,
                 clave_documental = EXCLUDED.clave_documental,
+                serie = EXCLUDED.serie,
+                numero = EXCLUDED.numero,
+                ruc_emisor = EXCLUDED.ruc_emisor,
+                razon_social_emisor = EXCLUDED.razon_social_emisor,
+                orden_compra = EXCLUDED.orden_compra,
+                orden_servicio = EXCLUDED.orden_servicio,
+                banco_abreviatura = EXCLUDED.banco_abreviatura,
+                codigo_operacion = EXCLUDED.codigo_operacion,
                 actualizado_en = NOW()
         """, (page_id,))
-
-        if cur.rowcount == 0:
-            print(f"[NO ACTUALIZADO] ID {page_id}. Verifica que sea tipo_detectado='otro' y tenga clave_documental.")
-            return
 
     print(f"[OK] Otro validado como clasificado. ID={page_id}")
 
@@ -66,7 +76,6 @@ def marcar(page_id: int):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", type=int, required=True)
-
     args = parser.parse_args()
 
     marcar(args.id)

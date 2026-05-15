@@ -1,15 +1,25 @@
 import argparse
 import re
 import shutil
+import unicodedata
 from pathlib import Path
 
 from core.db import get_cursor
 
+BASE_SALIDA = Path("data/salida")
 
-print("USANDO ARCHIVO CORRECTO")
 
 def clean(value: str | None) -> str:
-    return slugify(value or "SIN_DATO", separator="_").upper()
+    value = value or "SIN_DATO"
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^A-Za-z0-9]+", "_", value)
+    return value.strip("_").upper() or "SIN_DATO"
+
+
+def extraer_asiento(nombre: str | None) -> str:
+    m = re.search(r"\b(04-\d{4})\b", nombre or "")
+    return m.group(1) if m else "SIN_ASIENTO"
 
 
 def unique_path(path: Path) -> Path:
@@ -36,7 +46,8 @@ def leer_extraido(extraido_id: int):
                 lp.anio,
                 lp.mes
             FROM documentos_extraidos de
-            INNER JOIN lotes_procesamiento lp ON lp.id = de.lote_id
+            INNER JOIN lotes_procesamiento lp
+                ON lp.id = de.lote_id
             WHERE de.id = %s
         """, (extraido_id,))
         return cur.fetchone()
@@ -53,10 +64,7 @@ def marcar(extraido_id: int):
     year = row["anio"]
     month = row["mes"]
 
-    origen = Path(row["ruta_provisional"])
-
-    if row["ruta_final"]:
-        origen = Path(row["ruta_final"])
+    origen = Path(row["ruta_final"] or row["ruta_provisional"])
 
     if not origen.exists():
         print(f"[ERROR] No existe archivo: {origen}")
@@ -70,7 +78,9 @@ def marcar(extraido_id: int):
 
     destino = unique_path(destino_dir / f"{asiento} {cliente} OTRO {ref}.pdf")
 
-    confirmar = input(f"¿Mover como OTRO?\n{origen}\n-> {destino}\ns/n [s]: ").strip().lower() or "s"
+    confirmar = input(
+        f"¿Mover como OTRO?\n{origen}\n-> {destino}\ns/n [s]: "
+    ).strip().lower() or "s"
 
     if confirmar != "s":
         print("[CANCELADO]")
@@ -97,7 +107,8 @@ def marcar(extraido_id: int):
     with get_cursor(commit=True) as (_, cur):
         cur.execute("""
             UPDATE documentos_extraidos
-            SET tipo_documental = 'otro',
+            SET asiento_contable = %s,
+                tipo_documental = 'otro',
                 nombre_final = %s,
                 ruta_final = %s,
                 estado = 'procesado_sin_oc',
@@ -106,6 +117,7 @@ def marcar(extraido_id: int):
                 actualizado_en = NOW()
             WHERE id = %s
         """, (
+            asiento,
             destino.name,
             str(destino),
             extraido_id,
@@ -148,15 +160,6 @@ def marcar(extraido_id: int):
         ))
 
     print(f"[OK] Extraído marcado como OTRO: {destino.name}")
-
-
-def extraer_asiento(nombre: str) -> str:
-    m = re.search(r"\b(04-\d{4})\b", nombre or "")
-
-    if m:
-        return m.group(1)
-
-    return "SIN_ASIENTO"
 
 
 if __name__ == "__main__":
