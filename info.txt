@@ -1,3 +1,21 @@
+recapitulando me quede asi:
+BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
+Traceback (most recent call last):
+  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 258, in <module>
+    procesar(args.year, args.cliente, args.month)
+  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 198, in procesar
+    cur.execute("""
+  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\.venv\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "uq_documentos_agrupados_clave_ruta"
+DETAIL:  Key (clave_documental, ruta_archivo)=(FACTURA|10072442429|F001|20417, data\salida\2026\BBTEC\04\provisional\04-0001 FACTURA F001 20417 10072442429 P001-P001.pdf) already exists.
+
+(.venv)
+no puede agruparlos porque por favor validar el repo y dame los cambios
+
+
 Sí. Para continuar sin perder ediciones manuales, haz mínimo impacto:
 1. No toques documentos_agrupados.estado
 Déjalo así:

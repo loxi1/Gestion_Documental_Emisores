@@ -1,0 +1,76 @@
+import argparse
+from pathlib import Path
+
+from core.qr_utils import decode_qr_from_pdf_pro
+from core.qr_parser import parse_qr_payload
+
+
+def main(pdf_path: str, debug: bool):
+    path = Path(pdf_path)
+
+    if not path.exists():
+        print(f"[ERROR] No existe archivo: {path}")
+        return
+
+    debug_dir = None
+
+    if debug:
+        debug_dir = Path("storage/tmp/qr_debug/manual") / path.stem
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"PDF: {path}")
+    print("Leyendo QR...")
+
+    raws = decode_qr_from_pdf_pro(
+        pdf_path=path,
+        max_pages=1,
+        dpi=420,
+        debug_dir=debug_dir,
+        debug=debug,
+    )
+
+    if not raws:
+        print("[NO DETECTADO] No se pudo leer QR.")
+        if debug_dir:
+            print(f"Debug generado en: {debug_dir}")
+        return
+
+    print(f"\nQR detectados: {len(raws)}\n")
+
+    for i, raw in enumerate(raws, start=1):
+        print("=" * 100)
+        print(f"QR #{i}")
+        print(f"RAW:")
+        print(raw)
+
+        parsed = parse_qr_payload(raw)
+
+        print("\nPARSED:")
+        for k, v in parsed.items():
+            print(f"{k}: {v}")
+
+    if debug_dir:
+        print(f"\nDebug generado en: {debug_dir}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--pdf",
+        required=True,
+        help="Ruta del PDF a leer",
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Guarda imágenes intermedias de debug",
+    )
+
+    args = parser.parse_args()
+
+    main(
+        pdf_path=args.pdf,
+        debug=args.debug,
+    )
