@@ -184,15 +184,29 @@ def is_pago_transferencia_text(text: str) -> bool:
     t = norm(text)
     c = compact_text(t)
 
-    return bool(
-        "CONSTANCIADEOPERACION" in c
-        or "CONSTANCIA DE OPERACION" in t
-        or "IMPORTE TRANSFERIDO" in t
-        or "IMPORTE CARGADO" in t
-        or "CUENTA DE CARGO" in t and "CUENTA DE ABONO" in t
-        or "CODIGO DE SOLICITUD" in t
-        or "NUMERO DE OPERACION" in t and ("TRANSFERENCIA" in t or "ABONADA" in t)
-    )
+    señales = [
+        "CONSTANCIADEOPERACION" in c,
+        "CONSTANCIA DE OPERACION" in t,
+        "DETALLE DE SOLICITUD" in t,
+        "INFORMACION DE LA SOLICITUD" in t,
+        "INFORMACIÓN DE LA SOLICITUD" in t,
+        "NUMERO DE SOLICITUD" in t,
+        "NÚMERO DE SOLICITUD" in t,
+        "CODIGO DE SOLICITUD" in t,
+        "CÓDIGO DE SOLICITUD" in t,
+        "IMPORTE TRANSFERIDO" in t,
+        "IMPORTE CARGADO" in t,
+        "CUENTA DE CARGO" in t and "CUENTA DE ABONO" in t,
+        "CUENTA DE ORIGEN" in t and "CUENTA DE DESTINO" in t,
+        "TRANSFERENCIA A CUENTAS DE TERCEROS" in t,
+        "TRANSFERENCIAS INTERBANCARIAS" in t,
+        "TRANSFERENCIA INTERBANCARIA" in t,
+        "NUMERO DE OPERACION" in t and ("TRANSFERENCIA" in t or "ABONADA" in t or "PROCESADA" in t),
+        "NÚMERO DE OPERACIÓN" in t and ("TRANSFERENCIA" in t or "ABONADA" in t or "PROCESADA" in t),
+    ]
+
+    return sum(1 for x in señales if x) >= 2
+
 
 
 def is_nota_ingreso_text(text: str) -> bool:
@@ -404,6 +418,15 @@ def extract_ni(text: str) -> dict:
 def detect_banco(text: str) -> str | None:
     t = norm(text)
 
+    if "530-300" in t or "DETALLE DE SOLICITUD" in t:
+        return "IBK"
+
+    if "TRANSFERENCIAS INTERBANCARIAS" in t or "0011-" in t or "BBVA" in t:
+        return "BBVA"
+
+    if "CONSTANCIA DE OPERACION" in t and "BCP" in t:
+        return "BCP"
+
     for abrev, aliases in BANCOS.items():
         for alias in aliases:
             if norm(alias) in t:
@@ -412,21 +435,31 @@ def detect_banco(text: str) -> str | None:
     return None
 
 
+
 def extract_codigo_operacion(text: str, banco: str | None = None) -> str | None:
     t = norm(text)
 
     patterns = [
-        r"NUMERO\s+DE\s+OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
-        r"N[°º]\s*DE\s*OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
+        r"N[ÚU]MERO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
         r"CODIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"C[ÓO]DIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"N[ÚU]MERO\s+DE\s+OPERACI[ÓO]N\s*:?\s*([0-9,\-\s]{3,30})",
+        r"N[°º]\s*DE\s*OPERACI[ÓO]N\s*:?\s*([0-9,\-\s]{3,30})",
+        r"NUMERO\s+DE\s+OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
         r"CODIGO\s+OPERACION\s*:?\s*(\d{3,30})",
+        r"C[ÓO]DIGO\s+OPERACI[ÓO]N\s*:?\s*(\d{3,30})",
         r"NUMERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
+        r"N[ÚU]MERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
     ]
 
     for pattern in patterns:
         m = re.search(pattern, t, re.I)
         if m:
-            return re.sub(r"\s+", "", m.group(1).replace(",", ""))
+            codigo = m.group(1)
+            codigo = codigo.replace(",", "")
+            codigo = re.sub(r"\s+", "", codigo)
+            codigo = codigo.strip("-")
+            return codigo
 
     return None
 
