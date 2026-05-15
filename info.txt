@@ -1,47 +1,95 @@
-Validé el repo. En GitHub separar_fragmentos.py aún no evita doble pipeline, y agrupar_fragmentos.py todavía agrupa por bloques consecutivos, no por misma clave dentro del asiento. �
-GitHub +1
-1. SQL: reglas_clasificacion_manual
-SQL
-CREATE TABLE IF NOT EXISTS reglas_clasificacion_manual (
-    id SERIAL PRIMARY KEY,
-    cliente_abreviatura VARCHAR(20) NOT NULL,
-    archivo_fuente TEXT NOT NULL,
-    pagina INTEGER NOT NULL,
-    tipo_detectado VARCHAR(50) NOT NULL,
-    clave_documental TEXT NOT NULL,
-    serie VARCHAR(30),
-    numero VARCHAR(50),
-    ruc_emisor VARCHAR(11),
-    razon_social_emisor TEXT,
-    orden_compra VARCHAR(50),
-    orden_servicio VARCHAR(50),
-    banco_abreviatura VARCHAR(30),
-    codigo_operacion VARCHAR(100),
-    creado_en TIMESTAMP DEFAULT NOW(),
-    actualizado_en TIMESTAMP DEFAULT NOW(),
-    UNIQUE (cliente_abreviatura, archivo_fuente, pagina)
-);
-2. Código final app/separar_fragmentos.py
+Sí, estos formatos también deben entrar como pago_transferencia.
+Detectados:
+BBVA cuentas de terceros: usa Número de Operación 6,981-0, banco BBVA. �
+82.-BBVA OP 6981 - ISA INDUSTRIAL - PYATOCONGO.pdf
+BCP constancia de operación: usa Código de solicitud 72797132, banco BCP. �
+199.-BCP OP 72797132 - CORPORACION COMATPE - OC 7441 HIDRANDINA PR 137-25.pdf
+BBVA interbancaria: usa Número de Operación : 3442 - 3444, banco BBVA. �
+BBVA OP 3442 - UNIVERSIDAD NACIONAL DE INGENIERIA - SERV.pdf
+Interbank Detalle de solicitud: usa Número de solicitud, banco IBK/INTERBANK.
+En tu repo, document_enricher.py ya tiene is_pago_transferencia_text(), detect_banco(), extract_codigo_operacion() y extract_pago_transferencia(), pero falta robustecer Interbank y normalizar bien códigos tipo 6,981-0.
+Reemplaza estas 2 funciones en app/core/document_enricher.py.
 Python
+def is_pago_transferencia_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
 
-3. Nuevo app/aplicar_reglas_manuales.py
+    señales = [
+        "CONSTANCIADEOPERACION" in c,
+        "CONSTANCIA DE OPERACION" in t,
+        "DETALLE DE SOLICITUD" in t,
+        "INFORMACION DE LA SOLICITUD" in t,
+        "INFORMACIÓN DE LA SOLICITUD" in t,
+        "NUMERO DE SOLICITUD" in t,
+        "NÚMERO DE SOLICITUD" in t,
+        "CODIGO DE SOLICITUD" in t,
+        "CÓDIGO DE SOLICITUD" in t,
+        "IMPORTE TRANSFERIDO" in t,
+        "IMPORTE CARGADO" in t,
+        "CUENTA DE CARGO" in t and "CUENTA DE ABONO" in t,
+        "CUENTA DE ORIGEN" in t and "CUENTA DE DESTINO" in t,
+        "TRANSFERENCIA A CUENTAS DE TERCEROS" in t,
+        "TRANSFERENCIAS INTERBANCARIAS" in t,
+        "TRANSFERENCIA INTERBANCARIA" in t,
+        "NUMERO DE OPERACION" in t and ("TRANSFERENCIA" in t or "ABONADA" in t or "PROCESADA" in t),
+        "NÚMERO DE OPERACIÓN" in t and ("TRANSFERENCIA" in t or "ABONADA" in t or "PROCESADA" in t),
+    ]
+
+    return sum(1 for x in señales if x) >= 2
 Python
+def extract_codigo_operacion(text: str, banco: str | None = None) -> str | None:
+    t = norm(text)
 
-4. Cambiar solo construir_bloques() en agrupar_fragmentos.py
+    patterns = [
+        r"N[ÚU]MERO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"CODIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"C[ÓO]DIGO\s+DE\s+SOLICITUD\s*:?\s*(\d{5,30})",
+        r"N[ÚU]MERO\s+DE\s+OPERACI[ÓO]N\s*:?\s*([0-9,\-\s]{3,30})",
+        r"N[°º]\s*DE\s*OPERACI[ÓO]N\s*:?\s*([0-9,\-\s]{3,30})",
+        r"NUMERO\s+DE\s+OPERACION\s*:?\s*([0-9,\-\s]{3,30})",
+        r"CODIGO\s+OPERACION\s*:?\s*(\d{3,30})",
+        r"C[ÓO]DIGO\s+OPERACI[ÓO]N\s*:?\s*(\d{3,30})",
+        r"NUMERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
+        r"N[ÚU]MERO\s+DE\s+CONSTANCIA\s*:?\s*(\d{5,30})",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            codigo = m.group(1)
+            codigo = codigo.replace(",", "")
+            codigo = re.sub(r"\s+", "", codigo)
+            codigo = codigo.strip("-")
+            return codigo
+
+    return None
+Y mejora detect_banco() así:
 Python
+def detect_banco(text: str) -> str | None:
+    t = norm(text)
 
-Tu SELECT actual en agrupar_fragmentos.py ya está bien porque solo toma estado='clasificado'.
-5. Tolerancia OC/OS
-En document_enricher.py, asegúrate de tener estas versiones:
-Python
+    if "530-300" in t or "DETALLE DE SOLICITUD" in t:
+        return "IBK"
 
-Python
+    if "TRANSFERENCIAS INTERBANCARIAS" in t or "0011-" in t or "BBVA" in t:
+        return "BBVA"
 
-Con eso cubres:
+    if "CONSTANCIA DE OPERACION" in t and "BCP" in t:
+        return "BCP"
+
+    for abrev, aliases in BANCOS.items():
+        for alias in aliases:
+            if norm(alias) in t:
+                return abrev
+
+    return None
+Con esto te debería generar claves así:
 Plain text
-Orden de Compra N*”:002968
-Orden de Compra N*:002968
-Orden de Servicio
-Nº:000221
-6. Orden correcto para el siguiente mes
-Bash
+PAGO_TRANSFERENCIA|BBVA|6981-0
+PAGO_TRANSFERENCIA|BCP|72797132
+PAGO_TRANSFERENCIA|BBVA|3442-3444
+PAGO_TRANSFERENCIA|IBK|46254052
+Para evitar nombres feos, puedes normalizar guion:
+Python
+codigo = codigo.replace(" - ", "-")
+dentro de extract_codigo_operacion().
