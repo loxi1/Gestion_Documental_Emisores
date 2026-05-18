@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 from slugify import slugify
+import unicodedata
 
 from core.text_utils import compact_text
 from core.sunat_text_parser import parse_sunat_guia_from_text
@@ -97,7 +98,7 @@ def extract_factura_from_filename(filename: str) -> dict:
     stem = Path(filename).stem.strip()
 
     m = re.search(
-        r"^(?P<asiento>04-\d{4})\s+"
+        r"^(?P<asiento>\d{2}-\d{4})\s+"
         r"(?P<serie>[A-Z0-9]{2,6})\s+"
         r"(?P<numero>\d+)\s+"
         r"(?P<ruc>(10|20)\d{9})\s+"
@@ -253,9 +254,6 @@ def is_factura_text(text: str, filename: str = "") -> bool:
     t = norm(text)
     c = compact_text(t)
 
-    if is_documento_extranjero_o_proforma(t):
-        return False
-
     return bool(
         "FACTURAELECTRONICA" in c
         or "FACTURA ELECTRONICA" in t
@@ -287,9 +285,6 @@ def is_guia_text(text: str, filename: str = "") -> bool:
 
 def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> str:
     t = norm(text)
-
-    if is_documento_extranjero_o_proforma(t):
-        return "otro"
     
     if is_nota_credito_text(t):
         return "nota_credito"
@@ -327,8 +322,15 @@ def extract_factura_from_text(text: str) -> dict:
     serie = None
     numero = None
 
-    for pattern in SERIE_NUMERO_PATTERNS:
-        m = re.search(pattern, t, re.I)
+    ruc_patterns = [
+        r"DATOS\s+DEL\s+EMISOR[\s\S]{0,300}?RUC\s*:?\s*((10|20)\d{9})",
+        r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,120}?R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+        r"RUC\s+EMISOR\s*:?\s*((10|20)\d{9})",
+    ]
+
+    for p in patterns:
+        m = re.search(p, t, re.I)
         if m:
             serie = normalize_serie(m.group(1))
             numero = m.group(2).lstrip("0") or "0"
@@ -336,28 +338,27 @@ def extract_factura_from_text(text: str) -> dict:
 
     ruc_val = None
 
-    # Preferir RUC emisor cercano a cabecera
-    ruc_match = re.search(
-        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+    m = re.search(
+        r"DATOS\s+DEL\s+EMISOR[\s\S]{0,300}?RUC\s*:?\s*((10|20)\d{9})",
         t,
         re.I,
     )
 
-    if ruc_match:
-        ruc_val = ruc_match.group(1)
-    else:
-        ruc = re.search(r"\b(10|20)\d{9}\b", t)
-        ruc_val = ruc.group(0) if ruc else None
+    if not m:
+        m = re.search(
+            r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+            t,
+            re.I,
+        )
+
+    if m:
+        ruc_val = m.group(1)
 
     return {
         "serie": serie,
         "numero": numero,
         "ruc": ruc_val,
-        "clave": (
-            f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}"
-            if serie and numero
-            else None
-        ),
+        "clave": f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}" if serie and numero else None,
     }
 
 
@@ -515,7 +516,7 @@ def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
     for pattern in ruc_patterns:
         m = re.search(pattern, t, re.I)
         if m:
-            ruc = m.group(1)
+            ruc_val = m.group(1)
             break
 
     comp = re.search(
@@ -699,43 +700,13 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pag
     if not data["clave_documental"]:
         asiento = None
 
-        m = re.search(r"(04-\d{4})", archivo_fuente or "")
+        m = re.search(r"(\d{2}-\d{4})", archivo_fuente or "")
         if m:
             asiento = m.group(1)
 
         data["clave_documental"] = f"OTRO|{asiento or 'SIN_ASIENTO'}|P{pagina or 0:03d}"
 
     return data
-
-
-
-def is_documento_extranjero_o_proforma(text: str) -> bool:
-    t = norm(text)
-
-    return bool(
-        "PROFORMA" in t
-        or "PROFORMA INVOICE" in t
-        or "QUOTATION" in t
-        or "COMMERCIAL INVOICE" in t
-        or "PAYMENT TERM" in t
-        or "BANK DETAILS" in t
-        or "SHENZHEN" in t
-        or "INDUSTRIAL AND COMMERCIAL BANK OF CHINA" in t
-    )
-
-
-def is_documento_extranjero_o_proforma(text: str) -> bool:
-    t = norm(text)
-
-    return bool(
-        "PROFORMA" in t
-        or "PROFORMA INVOICE" in t
-        or "QUOTATION" in t
-        or "COMMERCIAL INVOICE" in t
-        or "PAYMENT TERM" in t
-        or "BANK DETAILS" in t
-        or "SHENZHEN" in t
-    )
 
 
 def is_guia_visual_text(text: str) -> bool:

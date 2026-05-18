@@ -69,7 +69,14 @@ def process(year: int, cliente: str, month: int):
             nuevo_estado = "revision_manual"
 
         if data["tipo"] in ("factura", "nota_credito", "guia_remision"):
-            if not data.get("serie") or not data.get("numero") or not data.get("ruc") or not data.get("clave_documental"):
+            if (
+                not data.get("serie")
+                or not data.get("numero")
+                or not data.get("ruc")
+                or data.get("ruc") == "SINRUC"
+                or not data.get("clave_documental")
+                or "|SINRUC|" in (data.get("clave_documental") or "")
+            ):
                 nuevo_estado = "revision_manual"
 
         with get_cursor(commit=True) as (_, cur):
