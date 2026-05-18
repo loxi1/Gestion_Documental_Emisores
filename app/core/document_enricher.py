@@ -27,6 +27,12 @@ BANCOS = {
     "COM": ["BANCO DE COMERCIO"],
 }
 
+SERIE_NUMERO_PATTERNS = [
+    r"\b([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
+    r"\b([EF][A-Z0-9]{3})\s+0*(\d{1,12})\b",
+    r"\b(F[A-Z0-9]{2,5})\s*[-–— ]\s*0*(\d{1,12})\b",
+]
+
 
 def norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").upper()).strip()
@@ -315,29 +321,40 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
 def extract_factura_from_text(text: str) -> dict:
     t = norm(text)
 
-    patterns = [
-        r"\b(F[A-Z0-9]{2,5})\s*[- ]\s*0*(\d{1,10})\b",
-        r"\b(FO\d{2})\s*[- ]\s*0*(\d{1,10})\b",
-    ]
-
     serie = None
     numero = None
 
-    for p in patterns:
-        m = re.search(p, t, re.I)
+    for pattern in SERIE_NUMERO_PATTERNS:
+        m = re.search(pattern, t, re.I)
         if m:
             serie = normalize_serie(m.group(1))
             numero = m.group(2).lstrip("0") or "0"
             break
 
-    ruc = re.search(r"\b(10|20)\d{9}\b", t)
-    ruc_val = ruc.group(0) if ruc else None
+    ruc_val = None
+
+    # Preferir RUC emisor cercano a cabecera
+    ruc_match = re.search(
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+        t,
+        re.I,
+    )
+
+    if ruc_match:
+        ruc_val = ruc_match.group(1)
+    else:
+        ruc = re.search(r"\b(10|20)\d{9}\b", t)
+        ruc_val = ruc.group(0) if ruc else None
 
     return {
         "serie": serie,
         "numero": numero,
         "ruc": ruc_val,
-        "clave": f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}" if serie and numero else None,
+        "clave": (
+            f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}"
+            if serie and numero
+            else None
+        ),
     }
 
 
@@ -781,16 +798,16 @@ def extract_nota_credito_from_text(text: str) -> dict:
     serie = None
     numero = None
 
-    ruc_match = re.search(r"RUC\s*:?\s*((10|20)\d{9})", t, re.I)
+    ruc_match = re.search(
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
+        t,
+        re.I,
+    )
+
     if ruc_match:
         ruc = ruc_match.group(1)
 
-    patterns = [
-        r"\b([EF][A-Z0-9]{3})\s*[- ]\s*0*(\d{1,10})\b",
-        r"N[°º]?\s*([EF][A-Z0-9]{3})\s*[- ]\s*0*(\d{1,10})\b",
-    ]
-
-    for pattern in patterns:
+    for pattern in SERIE_NUMERO_PATTERNS:
         m = re.search(pattern, t, re.I)
         if m:
             serie = normalize_serie(m.group(1))
@@ -798,6 +815,7 @@ def extract_nota_credito_from_text(text: str) -> dict:
             break
 
     clave = None
+
     if ruc and serie and numero:
         clave = f"NC|{ruc}|{serie}|{numero}"
 
