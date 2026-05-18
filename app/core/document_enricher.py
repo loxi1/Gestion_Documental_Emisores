@@ -325,24 +325,9 @@ def extract_factura_from_text(text: str) -> dict:
     patterns = [
         r"TIPO\s+DE\s+COMPROBANTE\s*:\s*FACTURA\s+N[ÚU]MERO\s*:\s*([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
         r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,100}?([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
-        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*(?:10|20)\d{9}[\s\S]{0,80}?([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N\s*[°º]?)?\s*:?\s*(?:10|20)\d{9}[\s\S]{0,80}?([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
         r"\b([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
     ]
-
-    ruc_val = None
-
-    ruc_patterns = [
-        r"DATOS\s+DEL\s+EMISOR[\s\S]{0,300}?RUC\s*:?\s*((10|20)\d{9})",
-        r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,120}?R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
-        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
-        r"RUC\s+EMISOR\s*:?\s*((10|20)\d{9})",
-    ]
-
-    for pattern in ruc_patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            ruc_val = m.group(1)
-            break
 
     for p in patterns:
         m = re.search(p, t, re.I)
@@ -353,27 +338,28 @@ def extract_factura_from_text(text: str) -> dict:
 
     ruc_val = None
 
-    m = re.search(
+    ruc_patterns = [
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N\s*[°º]?)?\s*:?\s*((10|20)\d{9})",
+        r"RUC\s*(?:N\s*[°º]?)?\s*:?\s*((10|20)\d{9})",
+        r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,150}?((10|20)\d{9})",
         r"DATOS\s+DEL\s+EMISOR[\s\S]{0,300}?RUC\s*:?\s*((10|20)\d{9})",
-        t,
-        re.I,
-    )
+    ]
 
-    if not m:
-        m = re.search(
-            r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
-            t,
-            re.I,
-        )
-
-    if m:
-        ruc_val = m.group(1)
+    for pattern in ruc_patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            ruc_val = m.group(1)
+            break
 
     return {
         "serie": serie,
         "numero": numero,
         "ruc": ruc_val,
-        "clave": f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}" if serie and numero else None,
+        "clave": (
+            f"FACTURA|{ruc_val or 'SINRUC'}|{serie}|{numero}"
+            if serie and numero
+            else None
+        ),
     }
 
 
