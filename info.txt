@@ -1,44 +1,29 @@
-Claro, el error es porque documentos_agrupados no tiene columna ruc. El RUC está dentro de clave_documental.
-Usa esta consulta:
-SQL
-UPDATE documentos_paginas dp
-SET razon_social_emisor = p.razon_social
-FROM proveedores p
-WHERE dp.ruc_emisor = p.ruc
-  AND dp.cliente_abreviatura = 'CIMA'
-  AND dp.anio = 2026
-  AND dp.mes = 1
-  AND (
-        dp.razon_social_emisor IS NULL
-        OR dp.razon_social_emisor = ''
-        OR dp.razon_social_emisor = 'SIN_RAZON_SOCIAL'
-      );
-Luego lo más limpio es regenerar agrupados y distribución:
-SQL
-DELETE FROM documentos_agrupados
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1;
-
-UPDATE documentos_paginas
-SET estado='clasificado'
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1
-  AND estado='agrupado';
-Y borrar salidas físicas:
-Bash
-rm -rf data/salida/2026/CIMA/01/provisional
-rm -rf data/salida/2026/CIMA/01/con_oc
-rm -rf data/salida/2026/CIMA/01/sin_oc
-Después:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
-python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
-Para que no vuelva a pasar, en clasificar_paginas.py agrega:
+Sí, tu clasificar_paginas.py ya tiene el cambio, pero tiene un detalle mal:
 Python
-from core.proveedor_service import get_or_fetch_proveedor
-y después de enrich_page(...):
+data["razon_social_emisor"] = proveedor["razon_social"]
+Tu proveedor_service.py devuelve normalmente:
+Python
+{
+    "ruc": ...,
+    "nombre": ...,
+    "direccion": ...
+}
+Entonces debe ser:
+Python
+data["razon_social_emisor"] = proveedor.get("nombre") or proveedor.get("razon_social")
+Cambio puntual
+Reemplaza este bloque:
+Python
+if proveedor:
+    data["razon_social_emisor"] = proveedor["razon_social"]
+por:
+Python
+if proveedor:
+    razon = proveedor.get("nombre") or proveedor.get("razon_social")
+
+    if razon:
+        data["razon_social_emisor"] = razon
+Bloque correcto completo
 Python
 ruc = data.get("ruc")
 
@@ -48,5 +33,16 @@ if ruc and (
 ):
     proveedor = get_or_fetch_proveedor(ruc)
 
-    if proveedor and proveedor.get("nombre"):
-        data["razon_social_emisor"] = proveedor["nombre"]
+    if proveedor:
+        razon = proveedor.get("nombre") or proveedor.get("razon_social")
+
+        if razon:
+            data["razon_social_emisor"] = razon
+Además, en el UPDATE, cambia:
+Python
+data["razon_social_emisor"],
+por algo más seguro:
+Python
+data.get("razon_social_emisor"),
+Así no revienta si algún tipo documental no trae razón social.
+Con eso ya debe tomar primero de proveedores, y si no existe, usar API mediante get_or_fetch_proveedor().
