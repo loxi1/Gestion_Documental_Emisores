@@ -322,12 +322,27 @@ def extract_factura_from_text(text: str) -> dict:
     serie = None
     numero = None
 
+    patterns = [
+        r"TIPO\s+DE\s+COMPROBANTE\s*:\s*FACTURA\s+N[ÚU]MERO\s*:\s*([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
+        r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,100}?([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
+        r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*(?:10|20)\d{9}[\s\S]{0,80}?([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})",
+        r"\b([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
+    ]
+
+    ruc_val = None
+
     ruc_patterns = [
         r"DATOS\s+DEL\s+EMISOR[\s\S]{0,300}?RUC\s*:?\s*((10|20)\d{9})",
         r"FACTURA\s+ELECTR[ÓO]NICA[\s\S]{0,120}?R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
         r"R\.?\s*U\.?\s*C\.?\s*(?:N[°º])?\s*:?\s*((10|20)\d{9})",
         r"RUC\s+EMISOR\s*:?\s*((10|20)\d{9})",
     ]
+
+    for pattern in ruc_patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            ruc_val = m.group(1)
+            break
 
     for p in patterns:
         m = re.search(p, t, re.I)
@@ -516,7 +531,7 @@ def extract_pago_detraccion(text: str, archivo_fuente: str = "") -> dict:
     for pattern in ruc_patterns:
         m = re.search(pattern, t, re.I)
         if m:
-            ruc_val = m.group(1)
+            ruc = m.group(1)
             break
 
     comp = re.search(
