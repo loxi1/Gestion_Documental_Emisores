@@ -21,7 +21,7 @@ def normalize(txt: str) -> str:
 
 
 def extract_asiento(filename: str) -> str:
-    m = re.search(r"^(04-\d{4})", filename)
+    m = re.search(r"\b(\d{2}-\d{4})\b", filename)
     return m.group(1) if m else "SIN_ASIENTO"
 
 
@@ -89,6 +89,10 @@ def process(year: int, cliente: str, month: int):
             continue
 
         asiento = extract_asiento(pdf.name)
+
+        if asiento == "SIN_ASIENTO":
+            print(f"[OMITIDO SIN ASIENTO] {pdf.name} | Ejecuta preclasificar_sin_nombre.py primero")
+            continue
 
         try:
             with fitz.open(pdf) as doc:

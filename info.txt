@@ -7,17 +7,13 @@ GitHub
 1. Cambio obligatorio en separar_fragmentos.py
 Reemplaza extract_asiento() por:
 Python
-def extract_asiento(filename: str) -> str:
-    m = re.search(r"\b(\d{2}-\d{4})\b", filename)
-    return m.group(1) if m else "SIN_ASIENTO"
+
 Y dentro del for pdf in pdfs:, después de:
 Python
 asiento = extract_asiento(pdf.name)
 agrega:
 Python
-if asiento == "SIN_ASIENTO":
-    print(f"[OMITIDO SIN ASIENTO] {pdf.name} | Ejecuta preclasificar_sin_nombre.py primero")
-    continue
+
 Así nunca más te creará:
 Plain text
 1_P1.pdf
