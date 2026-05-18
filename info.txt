@@ -1,49 +1,48 @@
-Ya habia corregido lo pendientes manualmente:
-BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
-$ python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 4
-
-Registros para revisar: 1
-
-========================================================================================================================
-ID       : 1251
-Asiento  : 04-0366
-Archivo  : 04-0366 BBTEC SIN_NOMBRE 20260511201216067.pdf
-Página   : 4
-Ruta     : 04-0366 BBTEC SIN_NOMBRE 20260511201216067_P4.pdf
-Tipo     : otro
-Clave    : OTRO|04-0366|P004
-OC       : None
-OS       : None
-RUC      : None
-Serie    : None
-Número   : None
-
-Editar   : python app/editar_pagina_manual.py --id 1251
-Validar  : python app/marcar_otro_validado.py --id 1251
-
-Reporte finalizado.
-
-(.venv)
-BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
-$ python app/marcar_otro_validado.py --id 1251
-[OK] Otro validado como clasificado. ID=1251
-(.venv)
-BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
-$ python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 4
-
-Registros para revisar: 0
-
-
-Reporte finalizado.
-
-(.venv)
-
-tengo este select en psql
-gestiondocumental_mvp=# SELECT estado, COUNT(*) FROM documentos_paginas WHERE cliente_abreviatura='BBTEC' AND anio=2026 AND mes=4 GROUP BY
- estado;
-       estado       | count
---------------------+-------
- agrupado           |   167
- revision_manual_qr |    27
- clasificado        |   211
-(3 rows)
+Sí. Esos 27 no se distribuirán porque están en:
+Plain text
+revision_manual_qr
+y además no tienen agrupado:
+Plain text
+agrupado_id = NULL
+ruta_final = NULL
+Lo que pasa es esto:
+Plain text
+tipo_detectado = guia_remision
+clave_documental = OTRO|asiento|pagina
+estado = revision_manual_qr
+O sea: el sistema sospechó que eran guías, pero no pudo completar serie/número/RUC por QR, entonces las dejó fuera.
+Antes de distribuir tienes 2 caminos:
+Opción segura para cerrar el mes
+Si ya revisaste y aceptas que queden como OTRO, márcalas como clasificado:
+SQL
+UPDATE documentos_paginas
+SET estado = 'clasificado',
+    tipo_detectado = 'otro',
+    requiere_qr = FALSE,
+    qr_procesado = TRUE,
+    qr_error = NULL
+WHERE cliente_abreviatura='BBTEC'
+  AND anio=2026
+  AND mes=4
+  AND estado='revision_manual_qr'
+  AND clave_documental LIKE 'OTRO|%';
+Luego:
+Bash
+python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
+python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
+python app/reporte_integridad_lote.py --year 2026 --cliente BBTEC --month 4
+Opción más exacta
+Editar una por una:
+Bash
+python app/editar_pagina_manual.py --id 936
+Pero para cerrar el mes 4 rápido, la primera opción es razonable porque ya tienen clave OTRO|... y no se pierden.
+Antes de actualizar puedes contar:
+SQL
+SELECT COUNT(*)
+FROM documentos_paginas
+WHERE cliente_abreviatura='BBTEC'
+  AND anio=2026
+  AND mes=4
+  AND estado='revision_manual_qr'
+  AND clave_documental LIKE 'OTRO|%';
+Debe dar 27.
