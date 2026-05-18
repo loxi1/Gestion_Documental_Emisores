@@ -239,6 +239,14 @@ def procesar(year: int, cliente: str, month: int):
                 year,
                 month,
             ))
+        
+        page_ids = [p["id"] for p in paginas_ordenadas]
+
+        cur.execute("""
+            UPDATE documentos_paginas
+            SET estado = 'agrupado'
+            WHERE id = ANY(%s)
+        """, (page_ids,))
 
         total += 1
         print(f"[AGRUPADO] {filename}")

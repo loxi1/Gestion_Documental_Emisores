@@ -1,152 +1,12 @@
-Sí, puedes corregir solo desde documentos_agrupados.id >= 1832, sin tocar lo anterior.
-La idea es:
-Plain text
-último correcto antes de 1832 = 04-0275
-desde id 1832 en adelante = 04-0276, 04-0277, 04-0278...
-1. Primero revisa qué vas a cambiar
-SQL
-WITH base AS (
-    SELECT COALESCE(
-        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
-        0
-    ) AS max_num
-    FROM documentos_agrupados
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id < 1832
-),
-ordenados AS (
-    SELECT
-        id,
-        asiento_contable AS asiento_actual,
-        '04-' || LPAD(
-            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
-            4,
-            '0'
-        ) AS asiento_nuevo
-    FROM documentos_agrupados, base
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id >= 1832
-)
-SELECT *
-FROM ordenados
-ORDER BY id
-LIMIT 30;
-Si ves que empieza en:
-Plain text
-04-0276
-04-0277
-04-0278
-recién actualizas.
-2. Actualizar documentos_agrupados
-SQL
-WITH base AS (
-    SELECT COALESCE(
-        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
-        0
-    ) AS max_num
-    FROM documentos_agrupados
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id < 1832
-),
-ordenados AS (
-    SELECT
-        id,
-        '04-' || LPAD(
-            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
-            4,
-            '0'
-        ) AS asiento_nuevo
-    FROM documentos_agrupados, base
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id >= 1832
-)
-UPDATE documentos_agrupados da
-SET asiento_contable = o.asiento_nuevo
-FROM ordenados o
-WHERE da.id = o.id;
-3. Actualizar documentos_paginas relacionado
-Como documentos_paginas no tiene id >= 1832, hay que relacionarlo por:
-Plain text
-archivo_fuente
-clave_documental
-cliente/anio/mes
-SQL
-WITH base AS (
-    SELECT COALESCE(
-        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
-        0
-    ) AS max_num
-    FROM documentos_agrupados
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id < 1832
-),
-ordenados AS (
-    SELECT
-        id,
-        archivo_fuente,
-        clave_documental,
-        '04-' || LPAD(
-            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
-            4,
-            '0'
-        ) AS asiento_nuevo
-    FROM documentos_agrupados, base
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id >= 1832
-)
-UPDATE documentos_paginas dp
-SET asiento_contable = o.asiento_nuevo
-FROM ordenados o
-WHERE dp.cliente_abreviatura = 'BBTEC'
-  AND dp.anio = 2026
-  AND dp.mes = 4
-  AND dp.archivo_fuente = o.archivo_fuente
-  AND dp.clave_documental = o.clave_documental;
-4. Actualizar archivos_preclasificados
-SQL
-WITH base AS (
-    SELECT COALESCE(
-        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
-        0
-    ) AS max_num
-    FROM documentos_agrupados
-    WHERE cliente_abreviatura = 'BBTEC'
-      AND anio = 2026
-      AND mes = 4
-      AND id < 1832
-),
-ordenados AS (
-    SELECT
-        ap.id,
-        '04-' || LPAD(
-            (base.max_num + ROW_NUMBER() OVER (ORDER BY ap.id))::TEXT,
-            4,
-            '0'
-        ) AS asiento_nuevo
-    FROM archivos_preclasificados ap, base
-    WHERE ap.cliente_abreviatura = 'BBTEC'
-      AND ap.anio = 2026
-      AND ap.mes = 4
-)
-UPDATE archivos_preclasificados ap
-SET asiento_generado = o.asiento_nuevo,
-    actualizado_en = NOW()
-FROM ordenados o
-WHERE ap.id = o.id;
-5. Luego marca páginas ya agrupadas
-SQL
+ejecute del 1 al 5 hasta el 4 salio que si actualize pero en el 5 no actualizo ninguno se porque previamente ejecute el codigo anterior te muestro los dos cambios ademas ver el repo y en especial grupar_fragmentos.py y dime si existen cambios:
+gestiondocumental_mvp=# UPDATE documentos_paginas dp SET estado = 'agrupado' WHERE dp.cliente_abreviatura = 'BBTEC' AND dp.anio = 2026 AND
+ dp.mes = 4 AND dp.estado = 'clasificado' AND EXISTS ( SELECT 1 FROM documentos_agrupados da WHERE da.cliente_abreviatura = dp.cliente_abr
+eviatura AND da.anio = dp.anio AND da.mes = dp.mes AND da.archivo_fuente = dp.archivo_fuente AND da.clave_documental = dp.clave_documental
+ AND da.origen = 'fragmentos' );
+UPDATE 0
+gestiondocumental_mvp=#
+
+este ultimo me sale asi porque creo que ejecute este:
 UPDATE documentos_paginas dp
 SET estado = 'agrupado'
 WHERE dp.cliente_abreviatura = 'BBTEC'
@@ -159,11 +19,13 @@ WHERE dp.cliente_abreviatura = 'BBTEC'
       WHERE da.cliente_abreviatura = dp.cliente_abreviatura
         AND da.anio = dp.anio
         AND da.mes = dp.mes
+        AND da.asiento_contable = dp.asiento_contable
         AND da.archivo_fuente = dp.archivo_fuente
         AND da.clave_documental = dp.clave_documental
         AND da.origen = 'fragmentos'
   );
-Después continúas:
+
+que puedo hacer continuar 
 Bash
 python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
 python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
