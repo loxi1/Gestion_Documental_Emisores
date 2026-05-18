@@ -294,11 +294,14 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
     if is_nota_credito_text(t):
         return "nota_credito"
 
-    if is_guia_text(t, archivo_fuente) or is_guia_visual_text(t):
-        return "guia_remision"
+    if is_reporte_factura_sunat(t):
+        return "factura"
 
     if is_factura_text(t, archivo_fuente):
         return "factura"
+
+    if is_guia_text(t, archivo_fuente) or is_guia_visual_text(t):
+        return "guia_remision"
 
     if is_orden_servicio_text(t, cliente):
         return "orden_servicio"
@@ -825,3 +828,13 @@ def extract_nota_credito_from_text(text: str) -> dict:
         "ruc": ruc,
         "clave": clave,
     }
+
+
+def is_reporte_factura_sunat(text: str) -> bool:
+    t = norm(text)
+    return (
+        "REPORTE DE COMPROBANTE ELECTRONICO" in t
+        and "TIPO DE COMPROBANTE" in t
+        and "FACTURA" in t
+        and "DATOS DEL EMISOR" in t
+    )

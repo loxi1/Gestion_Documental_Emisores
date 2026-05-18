@@ -62,9 +62,14 @@ def process(year: int, cliente: str, month: int):
 
         nuevo_estado = "clasificado"
 
+        texto = (row["texto_extraido"] or "").strip()
+        nuevo_estado = "clasificado"
+
         if data["tipo"] == "otro":
-            texto = (row["texto_extraido"] or "").strip()
-            if len(texto) > 30:
+            nuevo_estado = "revision_manual"
+
+        if data["tipo"] in ("factura", "nota_credito", "guia_remision"):
+            if not data.get("serie") or not data.get("numero") or not data.get("ruc") or not data.get("clave_documental"):
                 nuevo_estado = "revision_manual"
 
         with get_cursor(commit=True) as (_, cur):
