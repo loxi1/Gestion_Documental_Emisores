@@ -1,134 +1,116 @@
-Sí. Validé el repo: aún debes corregir 2 cosas antes de avanzar:
-separar_fragmentos.py sigue buscando solo 04-0000, debe aceptar cualquier mes: 01-0001, 02-0001, etc. �
-GitHub
-limpiar_lote.py no limpia archivos_preclasificados, por eso al reprocesar CIMA puede conservar correlativos anteriores. �
-GitHub
-Código final app/limpiar_lote.py
+Sí, el problema NO es el PDF.
+El PDF sí tiene el RUC correctamente visible:
+Plain text
+R.U.C. N° 20418896915
+y además tiene razón social implícita:
+Plain text
+MAPFRE PERU COMPAÑÍA DE SEGUROS Y REASEGUROS
+�
+01-0001 CIMA FACTURA F051 221763 20418896915 SIN_RAZON_SOCIAL.pdf
+Entonces el problema está en la lógica de enriquecimiento (document_enricher.py) o en cómo clasificar_paginas.py llama al proveedor.
+Lo que probablemente está pasando en tu repo actualizado:
+sí detecta:
+tipo
+serie
+número
+ruc
+pero NO ejecuta:
 Python
-import argparse
-import shutil
-from pathlib import Path
-
-from core.db import get_cursor
-
-BASE_TRABAJO = Path("data/trabajo")
-BASE_SALIDA = Path("data/salida")
-BASE_TMP = Path("storage/tmp/pages")
-BASE_QR_DEBUG = Path("storage/tmp/qr_debug")
-
-
-def limpiar_lote(year: int, cliente: str, month: int):
-    cliente = cliente.upper()
-    month_str = f"{month:02d}"
-
-    print(f"Limpiando lote: {year}/{cliente}/{month_str}")
-
-    with get_cursor(commit=True) as (_, cur):
-        cur.execute("""
-            DELETE FROM documentos_agrupados
-            WHERE cliente_abreviatura = %s
-              AND anio = %s
-              AND mes = %s
-        """, (cliente, year, month))
-
-        cur.execute("""
-            DELETE FROM documentos_paginas
-            WHERE cliente_abreviatura = %s
-              AND anio = %s
-              AND mes = %s
-        """, (cliente, year, month))
-
-        cur.execute("""
-            DELETE FROM documentos_extraidos
-            WHERE lote_id IN (
-                SELECT id
-                FROM lotes_procesamiento
-                WHERE cliente_abreviatura = %s
-                  AND anio = %s
-                  AND mes = %s
-            )
-        """, (cliente, year, month))
-
-        cur.execute("""
-            DELETE FROM archivos_preclasificados
-            WHERE cliente_abreviatura = %s
-              AND anio = %s
-              AND mes = %s
-        """, (cliente, year, month))
-
-        cur.execute("""
-            UPDATE lotes_procesamiento
-            SET total_archivos = 0,
-                estado = 'pendiente',
-                actualizado_en = NOW()
-            WHERE cliente_abreviatura = %s
-              AND anio = %s
-              AND mes = %s
-        """, (cliente, year, month))
-
-    rutas = [
-        BASE_TRABAJO / str(year) / cliente / month_str,
-        BASE_TMP / str(year) / cliente / month_str,
-        BASE_QR_DEBUG / str(year) / cliente / month_str,
-        BASE_SALIDA / str(year) / cliente / month_str / "provisional",
-        BASE_SALIDA / str(year) / cliente / month_str / "con_oc",
-        BASE_SALIDA / str(year) / cliente / month_str / "sin_oc",
-        BASE_SALIDA / str(year) / cliente / month_str / "revision",
-        BASE_SALIDA / str(year) / cliente / month_str / "revision_manual",
-    ]
-
-    for ruta in rutas:
-        if ruta.exists():
-            shutil.rmtree(ruta)
-            print(f"[BORRADO] {ruta}")
-
-    print("Limpieza finalizada.")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--cliente", required=True)
-    parser.add_argument("--month", type=int, required=True)
-    args = parser.parse_args()
-
-    limpiar_lote(args.year, args.cliente, args.month)
-Cambio obligatorio en separar_fragmentos.py
-Reemplaza:
+get_or_fetch_proveedor(ruc)
+o sí lo ejecuta pero:
+falla silenciosamente
+no actualiza razon_social
+o el UPDATE no se hace en documentos_paginas
+Lo correcto
+Cuando detectes:
 Python
-def extract_asiento(filename: str) -> str:
-    m = re.search(r"^(04-\d{4})", filename)
-    return m.group(1) if m else "SIN_ASIENTO"
+tipo = factura
+ruc = 20418896915
+debe pasar esto:
+Python
+proveedor = get_or_fetch_proveedor(ruc)
+y luego:
+Python
+razon_social = proveedor["nombre"]
+y guardar:
+Python
+razon_social_emisor
+Revisa esto en document_enricher.py
+Debe existir algo parecido a:
+Python
+proveedor = get_or_fetch_proveedor(ruc)
+y luego:
+Python
+if proveedor:
+    razon_social = proveedor.get("nombre")
+El problema más probable
+Tu código seguramente tiene algo así:
+Python
+if ruc and not razon_social:
+PERO:
+Python
+razon_social = ""
+o:
+Python
+razon_social = "SIN_RAZON_SOCIAL"
+entonces nunca entra.
+SOLUCIÓN FINAL
+Busca esto:
+Python
+if ruc and not razon_social:
+y reemplázalo por:
+Python
+if ruc and (
+    not razon_social
+    or razon_social == "SIN_RAZON_SOCIAL"
+):
+Luego esto:
+Python
+proveedor = get_or_fetch_proveedor(ruc)
+
+if proveedor:
+    razon_social = proveedor.get("nombre")
+También validar UPDATE
+Debe guardar en DB:
+Python
+cur.execute("""
+    UPDATE documentos_paginas
+    SET razon_social_emisor = %s
+    WHERE id = %s
+""", (
+    razon_social,
+    row["id"],
+))
+Qué pasó en tu caso
+Tu pipeline sí detectó:
+Plain text
+FACTURA F051 221763 20418896915
+pero como razon_social_emisor ya tenía:
+Plain text
+SIN_RAZON_SOCIAL
+el enriquecedor nunca volvió a consultar APISPERU.
+Por eso terminó así:
+Plain text
+01-0001 CIMA FACTURA F051 221763 20418896915 SIN_RAZON_SOCIAL.pdf
+Después del cambio
+Solo vuelve a ejecutar:
+Bash
+python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
+o mejor:
+Bash
+python app/procesar_qr_pendientes.py --year 2026 --cliente CIMA --month 1
+si el QR ya tiene RUC.
+BONUS (muy recomendado)
+En distribuir_agrupados.py:
+cambia esto:
+Python
+razon = safe_text(razones.get(data["ruc"]))
 por:
 Python
-def extract_asiento(filename: str) -> str:
-    m = re.search(r"\b(\d{2}-\d{4})\b", filename)
-    return m.group(1) if m else "SIN_ASIENTO"
-Y después de:
-Python
-asiento = extract_asiento(pdf.name)
-agrega:
-Python
-if asiento == "SIN_ASIENTO":
-    print(f"[OMITIDO SIN ASIENTO] {pdf.name} | Ejecuta preclasificar_sin_nombre.py primero")
-    continue
-Secuencia para avanzar con CIMA mes 01
-Bash
-python app/limpiar_lote.py --year 2026 --cliente CIMA --month 1
-
-python app/preclasificar_sin_nombre.py --year 2026 --cliente CIMA --month 1
-
-python app/separar_fragmentos.py --year 2026 --cliente CIMA --month 1
-
-python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
-
-python app/procesar_qr_pendientes.py --year 2026 --cliente CIMA --month 1
-
-python app/reporte_revision_manual.py --year 2026 --cliente CIMA --month 1
-Luego, cuando ya no haya revisión pendiente:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
-
-python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
-
-python app/reporte_integridad_lote.py --year 2026 --cliente CIMA --month 1
+razon = safe_text(
+    razones.get(data["ruc"]) or "SIN_RAZON_SOCIAL"
+)
+para evitar:
+Plain text
+None.pdf
+o nombres vacíos.
