@@ -174,6 +174,10 @@ def nombre_con_oc(cliente: str, control_tipo: str, control_num: str, clave: str,
             return f"{prefix} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
 
         return f"{prefix} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+    
+    if data["tipo"] == "NOTA_CREDITO":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{prefix} NOTA_CREDITO {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
 
     return f"{prefix} OTRO {safe_text(data.get('numero'))} {safe_text(data.get('codigo'))}.pdf"
 
@@ -206,6 +210,10 @@ def nombre_sin_oc(cliente: str, asiento: str, clave: str, razones: dict) -> str:
             return f"{asiento} {cliente} PAGO_DETRACCION {data['serie']} {data['numero']} {data['ruc']}.pdf"
 
         return f"{asiento} {cliente} PAGO_DETRACCION {data['banco']} {data['codigo']}.pdf"
+    
+    if data["tipo"] == "NOTA_CREDITO":
+        razon = safe_text(razones.get(data["ruc"]))
+        return f"{asiento} {cliente} NOTA_CREDITO {data['serie']} {data['numero']} {data['ruc']} {razon}.pdf"
 
     return f"{asiento} {cliente} OTRO {safe_text(data.get('numero'))} {safe_text(data.get('codigo'))}.pdf"
 

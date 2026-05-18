@@ -35,6 +35,17 @@ def parse_clave(clave: str) -> dict:
             return {"tipo": "PAGO_DETRACCION", "ruc": parts[1], "serie": parts[2], "numero": parts[3], "banco": "BN", "codigo": None}
         return {"tipo": "PAGO_DETRACCION", "ruc": None, "serie": None, "numero": None, "banco": parts[1] if len(parts) > 1 else "BN", "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO"}
 
+
+    if tipo == "NC":
+        return {
+            "tipo": "NOTA_CREDITO",
+            "ruc": parts[1],
+            "serie": parts[2],
+            "numero": parts[3],
+            "banco": None,
+            "codigo": None,
+    }
+
     if tipo == "OTRO":
         return {"tipo": "OTRO", "ruc": None, "serie": None, "numero": parts[1] if len(parts) > 1 else "SIN_ASIENTO", "banco": None, "codigo": parts[2] if len(parts) > 2 else "SIN_CODIGO"}
 

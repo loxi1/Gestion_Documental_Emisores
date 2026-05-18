@@ -12,6 +12,7 @@ TIPOS_VALIDOS = {
     "nota_ingreso",
     "pago_transferencia",
     "pago_detraccion",
+    "nota_credito",
     "otro",
 }
 
@@ -46,6 +47,9 @@ def build_clave(tipo, ruc=None, serie=None, numero=None, banco=None, codigo=None
         if ruc and serie and numero:
             return f"PAGO_DETRACCION|{ruc}|{serie}|{numero}"
         return f"PAGO_DETRACCION|{banco or 'BN'}|{codigo or 'SIN_CODIGO'}"
+    
+    if tipo == "nota_credito":
+        clave = f"NC|{ruc}|{serie}|{numero}"
 
     if tipo == "otro":
         return f"OTRO|{codigo or 'SIN_CODIGO'}"

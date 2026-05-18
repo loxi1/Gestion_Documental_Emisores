@@ -284,6 +284,9 @@ def detect_tipo(text: str, archivo_fuente: str = "", cliente: str = "BBTEC") -> 
 
     if is_documento_extranjero_o_proforma(t):
         return "otro"
+    
+    if is_nota_credito_text(t):
+        return "nota_credito"
 
     if is_guia_text(t, archivo_fuente) or is_guia_visual_text(t):
         return "guia_remision"
@@ -535,6 +538,7 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pag
     es_ni = is_nota_ingreso_text(text)
     es_pago_transf = is_pago_transferencia_text(text)
     es_pago_det = is_pago_detraccion_text(text)
+    es_nota_credito = is_nota_credito_text(text)
 
     # Regla nueva: si no es documento principal y tiene OC/OS, clasificarlo como OC/OS
     if (
@@ -544,6 +548,7 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pag
         and not es_ni
         and not es_pago_transf
         and not es_pago_det
+        and not es_nota_credito
     ):
         tipo = "orden_compra"
 
@@ -554,6 +559,7 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pag
         and not es_ni
         and not es_pago_transf
         and not es_pago_det
+        and not es_nota_credito
     ):
         tipo = "orden_servicio"
 
@@ -661,6 +667,15 @@ def enrich_page(text: str, archivo_fuente: str = "", cliente: str = "BBTEC", pag
             "clave_documental": p["clave"],
         })
     
+    elif tipo == "nota_credito":
+        nc = extract_nota_credito_from_text(text)
+        data.update({
+            "serie": nc["serie"],
+            "numero": nc["numero"],
+            "ruc": nc["ruc"],
+            "clave_documental": nc["clave"],
+        })
+
     if not data["clave_documental"]:
         asiento = None
 
@@ -744,3 +759,51 @@ def normalize_text(text: str) -> str:
     text = text.replace("SERVICI0", "SERVICIO")
 
     return text.strip()
+
+
+def is_nota_credito_text(text: str) -> bool:
+    t = norm(text)
+    c = compact_text(t)
+
+    return bool(
+        "NOTADECREDITOELECTRONICA" in c
+        or "NOTA DE CREDITO ELECTRONICA" in t
+        or "NOTA DE CRÉDITO ELECTRÓNICA" in t
+        or "NOTA DE CREDITO" in t
+        or "NOTA DE CRÉDITO" in t
+    )
+
+
+def extract_nota_credito_from_text(text: str) -> dict:
+    t = norm(text)
+
+    ruc = None
+    serie = None
+    numero = None
+
+    ruc_match = re.search(r"RUC\s*:?\s*((10|20)\d{9})", t, re.I)
+    if ruc_match:
+        ruc = ruc_match.group(1)
+
+    patterns = [
+        r"\b([EF][A-Z0-9]{3})\s*[- ]\s*0*(\d{1,10})\b",
+        r"N[°º]?\s*([EF][A-Z0-9]{3})\s*[- ]\s*0*(\d{1,10})\b",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, t, re.I)
+        if m:
+            serie = normalize_serie(m.group(1))
+            numero = m.group(2).lstrip("0") or "0"
+            break
+
+    clave = None
+    if ruc and serie and numero:
+        clave = f"NC|{ruc}|{serie}|{numero}"
+
+    return {
+        "serie": serie,
+        "numero": numero,
+        "ruc": ruc,
+        "clave": clave,
+    }
