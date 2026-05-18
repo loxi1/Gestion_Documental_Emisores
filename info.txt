@@ -1,7 +1,23 @@
-Sí, tu clasificar_paginas.py ya tiene el cambio, pero tiene un detalle mal:
+Sí, revisando lo último que compartiste del repo, clasificar_paginas.py ya quedó bastante bien estructurado.
+La consistencia general del flujo ahora sí está alineada, pero todavía hay algunos puntos importantes que debes ajustar para evitar falsos OTRO y asegurar estabilidad total.
+✅ Lo que YA está correcto
+clasificar_paginas.py
+Ya tiene:
+get_or_fetch_proveedor
+enriquecimiento automático
+estados:
+separado
+clasificado
+revision_manual
+soporte QR
+soporte bancos
+soporte OC/OS
+y el flujo está bien.
+❌ ERROR QUE AÚN TIENES
+Aquí:
 Python
 data["razon_social_emisor"] = proveedor["razon_social"]
-Tu proveedor_service.py devuelve normalmente:
+pero proveedor_service.py devuelve:
 Python
 {
     "ruc": ...,
@@ -10,39 +26,139 @@ Python
 }
 Entonces debe ser:
 Python
-data["razon_social_emisor"] = proveedor.get("nombre") or proveedor.get("razon_social")
-Cambio puntual
-Reemplaza este bloque:
+data["razon_social_emisor"] = proveedor["nombre"]
+CAMBIO FINAL
+Reemplaza:
 Python
 if proveedor:
     data["razon_social_emisor"] = proveedor["razon_social"]
 por:
 Python
-if proveedor:
-    razon = proveedor.get("nombre") or proveedor.get("razon_social")
-
-    if razon:
-        data["razon_social_emisor"] = razon
-Bloque correcto completo
+if proveedor and proveedor.get("nombre"):
+    data["razon_social_emisor"] = proveedor["nombre"]
+🔥 PROBLEMA REAL DEL REPO
+No está en clasificar_paginas.py.
+Está en:
+Plain text
+core/document_enricher.py
+porque:
+sí detecta guías
+sí detecta pagos
+sí detecta QR
+sí detecta OS/OC
+PERO:
+NO detecta correctamente:
+factura
+nota crédito
+formatos SUNAT modernos
+Lo que debes revisar YA en document_enricher.py
+1. Orden correcto
+Debe estar así:
 Python
-ruc = data.get("ruc")
+if is_nota_credito_text(t):
+    tipo = "nota_credito"
 
-if ruc and (
-    not data.get("razon_social_emisor")
-    or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
-):
-    proveedor = get_or_fetch_proveedor(ruc)
+elif is_factura_text(t, archivo_fuente):
+    tipo = "factura"
 
-    if proveedor:
-        razon = proveedor.get("nombre") or proveedor.get("razon_social")
-
-        if razon:
-            data["razon_social_emisor"] = razon
-Además, en el UPDATE, cambia:
+elif is_guia_text(t):
+    tipo = "guia_remision"
+NO al revés.
+2. Regex de serie/número
+Tus PDFs usan:
+Plain text
+E001-516
+E001-61
+F010-8
+F001 - 00013598
+Tu regex actual probablemente exige:
+Plain text
+F001-000123
+muy rígido.
+Regex FINAL recomendada
+En un solo sitio:
 Python
-data["razon_social_emisor"],
-por algo más seguro:
+SERIE_NUMERO_PATTERNS = [
+    r"\b([BEF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
+    r"\b([BEF][A-Z0-9]{3})\s+0*(\d{1,12})\b",
+]
+3. Factura electrónica
+Tus PDFs tienen:
+Plain text
+FACTURA ELECTRÓNICA
+pero seguramente tu detector busca:
 Python
-data.get("razon_social_emisor"),
-Así no revienta si algún tipo documental no trae razón social.
-Con eso ya debe tomar primero de proveedores, y si no existe, usar API mediante get_or_fetch_proveedor().
+"FACTURA ELECTRONICA"
+sin normalizar tildes.
+Debes usar SIEMPRE
+Python
+t = norm(text)
+y luego:
+Python
+"FACTURA ELECTRONICA" in t
+porque norm() elimina tildes.
+4. Nota crédito
+Estos PDFs son clarísimos:
+Plain text
+NOTA DE CRÉDITO ELECTRÓNICA
+�
+�
+�
+01-0070 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
+01-0067 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
+01-0069 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
+Entonces tu detector NO está entrando.
+Debe existir esto
+Python
+def is_nota_credito_text(t: str) -> bool:
+    return (
+        "NOTA DE CREDITO" in t
+        or "NOTA DE CRÉDITO" in t
+    )
+aunque realmente con norm() bastaría:
+Python
+"NOTA DE CREDITO" in t
+5. OCR fallback
+Algunos PDFs:
+NO tienen texto parseable
+pero sí imagen perfecta
+Ejemplo:
+0064
+0065
+0066
+0067
+Entonces el problema es:
+Plain text
+pdf_text vacío
+y probablemente no está entrando a OCR correctamente.
+Debes validar en separar_fragmentos.py
+Que cuando:
+Python
+texto_pdf.strip() == ""
+obligatoriamente haga:
+Python
+texto = run_ocr(page_pdf)
+fuente = "ocr"
+🔥 Conclusión REAL
+Tu pipeline YA está fuerte.
+El cuello de botella ahora es SOLO:
+document_enricher.py
+porque ahí decides:
+tipo
+serie
+número
+RUC
+clave documental
+y actualmente:
+está demasiado rígido
+no soporta suficientes formatos SUNAT reales
+Prioridad EXACTA
+1️⃣ Corregir proveedor
+Python
+proveedor["nombre"]
+2️⃣ Mejorar regex serie/número
+3️⃣ Detectar nota crédito antes que factura
+4️⃣ OCR fallback obligatorio
+5️⃣ Soporte formatos SUNAT reales
+Después de eso
+Tu pipeline ya quedaría muy cerca de producción real.
