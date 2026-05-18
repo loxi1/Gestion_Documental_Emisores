@@ -1,80 +1,78 @@
-Sí, esas 3 son nota_credito claramente:
-01-0067: Nota de Crédito E001-62, RUC 20510077190. �
-01-0067 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
-01-0069: Nota de Crédito F010-8, RUC 20610496068. �
-01-0069 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
-01-0070: Nota de Crédito E001-3, RUC 20610823361. �
-01-0070 CIMA OTRO SIN_RAZON_SOCIAL SIN_RAZON_SOCIAL.pdf
-El cambio final es reemplazar solo estas funciones en document_enricher.py:
-Python
-def is_nota_credito_text(text: str) -> bool:
-    t = norm(text)
-    c = compact_text(t)
-
-    return bool(
-        "NOTADECREDITOELECTRONICA" in c
-        or "NOTADECRÉDITOELECTRÓNICA" in c
-        or re.search(r"NOTA\s+DE\s+CR[ÉE]DITO\s+ELECTR[ÓO]NICA", t, re.I)
-        or re.search(r"NOTA\s+DE\s+CR[ÉE]DITO", t, re.I)
-    )
-
-
-def extract_nota_credito_from_text(text: str) -> dict:
-    t = norm(text)
-
-    ruc = None
-    serie = None
-    numero = None
-
-    ruc_patterns = [
-        r"NOTA\s+DE\s+CR[ÉE]DITO\s+ELECTR[ÓO]NICA[\s\S]{0,180}?R\.?\s*U\.?\s*C\.?\s*:?\s*((10|20)\d{9})",
-        r"R\.?\s*U\.?\s*C\.?\s*:?\s*((10|20)\d{9})",
-        r"RUC\s*:?\s*((10|20)\d{9})",
-    ]
-
-    for pattern in ruc_patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            ruc = m.group(1)
-            break
-
-    serie_patterns = [
-        r"NOTA\s+DE\s+CR[ÉE]DITO\s+ELECTR[ÓO]NICA[\s\S]{0,180}?\b([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
-        r"\b([EF][A-Z0-9]{3})\s*[-–—]\s*0*(\d{1,12})\b",
-    ]
-
-    for pattern in serie_patterns:
-        m = re.search(pattern, t, re.I)
-        if m:
-            serie = normalize_serie(m.group(1))
-            numero = m.group(2).lstrip("0") or "0"
-            break
-
-    return {
-        "serie": serie,
-        "numero": numero,
-        "ruc": ruc,
-        "clave": f"NC|{ruc}|{serie}|{numero}" if ruc and serie and numero else None,
-    }
-Y confirma en detect_tipo() que esté así, antes de factura:
-Python
-if is_nota_credito_text(t):
-    return "nota_credito"
-
-if is_reporte_factura_sunat(t):
-    return "factura"
-
-if is_factura_text(t, archivo_fuente):
-    return "factura"
-Luego reclasifica:
+Sí. Como ya fueron distribuidos, lo correcto es “retroceder” esos documentos específicos y volver a procesarlos, no limpiar todo el mes.
+Hazlo así:
+1. Identifica los IDs afectados
+Por ejemplo:
 SQL
-UPDATE documentos_paginas
-SET estado='separado'
+SELECT id, asiento_contable, archivo_fuente, tipo_detectado, estado
+FROM documentos_paginas
 WHERE cliente_abreviatura='CIMA'
   AND anio=2026
   AND mes=1
-  AND estado='revision_manual';
+  AND id IN (2063, 2064, 2065);
+2. Borra SOLO los agrupados relacionados
+Primero revisa:
+SQL
+SELECT id, clave_documental, ruta_final
+FROM documentos_agrupados
+WHERE cliente_abreviatura='CIMA'
+  AND anio=2026
+  AND mes=1
+  AND asiento_contable IN (
+      SELECT asiento_contable
+      FROM documentos_paginas
+      WHERE id IN (2063,2064,2065)
+  );
+Luego elimina:
+SQL
+DELETE FROM documentos_agrupados
+WHERE cliente_abreviatura='CIMA'
+  AND anio=2026
+  AND mes=1
+  AND asiento_contable IN (
+      SELECT asiento_contable
+      FROM documentos_paginas
+      WHERE id IN (2063,2064,2065)
+  );
+3. Borra archivos físicos distribuidos
+Sí, elimina manualmente los PDFs incorrectos de:
+Plain text
+data/salida/2026/CIMA/01/sin_oc/
+o con_oc/ si corresponde.
+4. Regresa páginas a separado
+SQL
+UPDATE documentos_paginas
+SET
+    estado='separado',
+    tipo_detectado=NULL,
+    serie=NULL,
+    numero=NULL,
+    ruc_emisor=NULL,
+    razon_social_emisor=NULL,
+    clave_documental=NULL,
+    requiere_qr=FALSE,
+    qr_procesado=FALSE,
+    qr_raw=NULL,
+    qr_error=NULL
+WHERE id IN (2063,2064,2065);
+5. Reclasifica
 Bash
 python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
-python app/reporte_revision_manual.py --year 2026 --cliente CIMA --month 1
-Con eso 01-0067, 01-0069 y 01-0070 ya no deberían quedar como OTRO.
+6. Reagrupar
+Bash
+python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
+7. Redistribuir
+Bash
+python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
+8. Verifica
+Bash
+python app/reporte_integridad_lote.py --year 2026 --cliente CIMA --month 1
+Recomendación importante
+Ya llegaste a un punto donde conviene crear:
+Plain text
+reprocesar_documento.py --id 2063
+Que haga automáticamente:
+borrar agrupados
+borrar archivo final
+resetear documentos_paginas
+regresar a separado
+Porque ahora ya tienes flujo de correcciones reales.
