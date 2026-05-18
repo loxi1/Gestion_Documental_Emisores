@@ -1,65 +1,134 @@
-Sí, ya vi el problema. En el repo actual separar_fragmentos.py todavía tiene esto:
+Sí. Validé el repo: aún debes corregir 2 cosas antes de avanzar:
+separar_fragmentos.py sigue buscando solo 04-0000, debe aceptar cualquier mes: 01-0001, 02-0001, etc. �
+GitHub
+limpiar_lote.py no limpia archivos_preclasificados, por eso al reprocesar CIMA puede conservar correlativos anteriores. �
+GitHub
+Código final app/limpiar_lote.py
+Python
+import argparse
+import shutil
+from pathlib import Path
+
+from core.db import get_cursor
+
+BASE_TRABAJO = Path("data/trabajo")
+BASE_SALIDA = Path("data/salida")
+BASE_TMP = Path("storage/tmp/pages")
+BASE_QR_DEBUG = Path("storage/tmp/qr_debug")
+
+
+def limpiar_lote(year: int, cliente: str, month: int):
+    cliente = cliente.upper()
+    month_str = f"{month:02d}"
+
+    print(f"Limpiando lote: {year}/{cliente}/{month_str}")
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            DELETE FROM documentos_agrupados
+            WHERE cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
+
+        cur.execute("""
+            DELETE FROM documentos_paginas
+            WHERE cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
+
+        cur.execute("""
+            DELETE FROM documentos_extraidos
+            WHERE lote_id IN (
+                SELECT id
+                FROM lotes_procesamiento
+                WHERE cliente_abreviatura = %s
+                  AND anio = %s
+                  AND mes = %s
+            )
+        """, (cliente, year, month))
+
+        cur.execute("""
+            DELETE FROM archivos_preclasificados
+            WHERE cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
+
+        cur.execute("""
+            UPDATE lotes_procesamiento
+            SET total_archivos = 0,
+                estado = 'pendiente',
+                actualizado_en = NOW()
+            WHERE cliente_abreviatura = %s
+              AND anio = %s
+              AND mes = %s
+        """, (cliente, year, month))
+
+    rutas = [
+        BASE_TRABAJO / str(year) / cliente / month_str,
+        BASE_TMP / str(year) / cliente / month_str,
+        BASE_QR_DEBUG / str(year) / cliente / month_str,
+        BASE_SALIDA / str(year) / cliente / month_str / "provisional",
+        BASE_SALIDA / str(year) / cliente / month_str / "con_oc",
+        BASE_SALIDA / str(year) / cliente / month_str / "sin_oc",
+        BASE_SALIDA / str(year) / cliente / month_str / "revision",
+        BASE_SALIDA / str(year) / cliente / month_str / "revision_manual",
+    ]
+
+    for ruta in rutas:
+        if ruta.exists():
+            shutil.rmtree(ruta)
+            print(f"[BORRADO] {ruta}")
+
+    print("Limpieza finalizada.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--cliente", required=True)
+    parser.add_argument("--month", type=int, required=True)
+    args = parser.parse_args()
+
+    limpiar_lote(args.year, args.cliente, args.month)
+Cambio obligatorio en separar_fragmentos.py
+Reemplaza:
 Python
 def extract_asiento(filename: str) -> str:
     m = re.search(r"^(04-\d{4})", filename)
-Eso está quemado para mes 04. Para CIMA mes 01, algunos archivos como 01-0083... sí deberían funcionar, pero los que ves como 1_P1, 2_P1, etc. indican que también quedaron PDFs originales sin preclasificar dentro de pendientes. El script procesó esos archivos crudos. �
-GitHub
-1. Cambio obligatorio en separar_fragmentos.py
-Reemplaza extract_asiento() por:
+    return m.group(1) if m else "SIN_ASIENTO"
+por:
 Python
-
-Y dentro del for pdf in pdfs:, después de:
+def extract_asiento(filename: str) -> str:
+    m = re.search(r"\b(\d{2}-\d{4})\b", filename)
+    return m.group(1) if m else "SIN_ASIENTO"
+Y después de:
 Python
 asiento = extract_asiento(pdf.name)
 agrega:
 Python
+if asiento == "SIN_ASIENTO":
+    print(f"[OMITIDO SIN ASIENTO] {pdf.name} | Ejecuta preclasificar_sin_nombre.py primero")
+    continue
+Secuencia para avanzar con CIMA mes 01
+Bash
+python app/limpiar_lote.py --year 2026 --cliente CIMA --month 1
 
-Así nunca más te creará:
-Plain text
-1_P1.pdf
-2_P1.pdf
-3_P1.pdf
-2. Limpia los temporales mal generados
-Para CIMA mes 01:
-Bash
-find storage/tmp/pages/2026/CIMA/01 -type f -regextype posix-extended -regex '.*/[0-9]+_P[0-9]+(_OCR)?\.pdf' -delete
-Y limpia en BD los que entraron sin asiento:
-SQL
-DELETE FROM documentos_paginas
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1
-  AND asiento_contable='SIN_ASIENTO';
-3. Antes de separar, limpia pendientes
-En data/trabajo/2026/CIMA/01/pendientes no deben quedar archivos como:
-Plain text
-1.pdf
-2.pdf
-3.pdf
-Muévelos aparte:
-Bash
-mkdir -p data/trabajo/2026/CIMA/01/pendientes_invalidos
-
-find data/trabajo/2026/CIMA/01/pendientes -maxdepth 1 -type f -name "*.pdf" \
-  ! -name "01-*.pdf" \
-  -exec mv {} data/trabajo/2026/CIMA/01/pendientes_invalidos/ \;
-Luego vuelve a correr:
-Bash
 python app/preclasificar_sin_nombre.py --year 2026 --cliente CIMA --month 1
+
 python app/separar_fragmentos.py --year 2026 --cliente CIMA --month 1
-4. Recomendación para preclasificar_sin_nombre.py
-Tu preclasificador sí genera correlativo por mes/empresa. �
-Pero úsalo siempre sobre:
-GitHub
-Plain text
-data/entrada/2026/CIMA/01/sin_nombre
-No pongas archivos crudos directamente en:
-Plain text
-data/trabajo/2026/CIMA/01/pendientes
-Ese fue el origen del problema.
-Con esos cambios, todo archivo de CIMA mes 01 debería quedar como:
-Plain text
-01-0092 CIMA SIN_NOMBRE archivo.pdf
-y ya no como:
-Plain text
-1_P1.pdf
+
+python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
+
+python app/procesar_qr_pendientes.py --year 2026 --cliente CIMA --month 1
+
+python app/reporte_revision_manual.py --year 2026 --cliente CIMA --month 1
+Luego, cuando ya no haya revisión pendiente:
+Bash
+python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
+
+python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
+
+python app/reporte_integridad_lote.py --year 2026 --cliente CIMA --month 1
