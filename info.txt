@@ -1,119 +1,151 @@
-recapitulando me quede asi:
-BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
-$ python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
-Traceback (most recent call last):
-  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 258, in <module>
-    procesar(args.year, args.cliente, args.month)
-  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\app\agrupar_fragmentos.py", line 198, in procesar
-    cur.execute("""
-  File "C:\D\Proyectos\GestionDocumental\Gestion_Documental_Emisores\.venv\Lib\site-packages\psycopg2\extras.py", line 236, in execute
-    return super().execute(query, vars)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "uq_documentos_agrupados_clave_ruta"
-DETAIL:  Key (clave_documental, ruta_archivo)=(FACTURA|10072442429|F001|20417, data\salida\2026\BBTEC\04\provisional\04-0001 FACTURA F001 20417 10072442429 P001-P001.pdf) already exists.
-
-(.venv)
-no puede agruparlos porque por favor validar el repo y dame los cambios
-
-
-Sí. Para continuar sin perder ediciones manuales, haz mínimo impacto:
-1. No toques documentos_agrupados.estado
-Déjalo así:
+Sí, puedes corregir solo desde documentos_agrupados.id >= 1832, sin tocar lo anterior.
+La idea es:
 Plain text
-agrupado
-distribuido_con_oc
-distribuido_sin_oc
-revision
-2. Usa documentos_paginas.estado para no reagrupar
-Ejecuta esto primero para marcar como agrupadas las páginas que ya tienen agrupado creado:
+último correcto antes de 1832 = 04-0275
+desde id 1832 en adelante = 04-0276, 04-0277, 04-0278...
+1. Primero revisa qué vas a cambiar
 SQL
-UPDATE documentos_paginas dp
-SET estado = 'agrupado'
-WHERE dp.cliente_abreviatura = 'BBTEC'
-  AND dp.anio = 2026
-  AND dp.mes = 4
-  AND dp.estado = 'clasificado'
-  AND EXISTS (
-      SELECT 1
-      FROM documentos_agrupados da
-      WHERE da.cliente_abreviatura = dp.cliente_abreviatura
-        AND da.anio = dp.anio
-        AND da.mes = dp.mes
-        AND da.asiento_contable = dp.asiento_contable
-        AND da.archivo_fuente = dp.archivo_fuente
-        AND da.clave_documental = dp.clave_documental
-        AND da.origen = 'fragmentos'
-  );
-Así agrupar_fragmentos.py ya no reprocesa lo anterior.
-3. Cambia agrupar_fragmentos.py
-Después del INSERT INTO documentos_agrupados, agrega:
-Python
-page_ids = [p["id"] for p in paginas_ordenadas]
-
-cur.execute("""
-    UPDATE documentos_paginas
-    SET estado = 'agrupado'
-    WHERE id = ANY(%s)
-""", (page_ids,))
-Tu SELECT debe quedarse así:
-SQL
-WHERE estado = 'clasificado'
-  AND clave_documental IS NOT NULL
-Con eso el agrupado será incremental.
-4. Arreglar correlativo de preclasificar_sin_nombre.py
-En get_max_asiento(), usa esta consulta más directa:
-Python
-def get_max_asiento(cliente: str, year: int, month: int) -> int:
-    month_prefix = f"{month:02d}-"
-
-    with get_cursor() as (_, cur):
-        cur.execute("""
-            SELECT COALESCE(MAX(num), 0) AS max_num
-            FROM (
-                SELECT CAST(SUBSTRING(asiento_contable FROM '\\d{2}-(\\d{4})') AS INTEGER) AS num
-                FROM documentos_agrupados
-                WHERE cliente_abreviatura = %s
-                  AND anio = %s
-                  AND mes = %s
-                  AND asiento_contable LIKE %s
-
-                UNION ALL
-
-                SELECT CAST(SUBSTRING(asiento_generado FROM '\\d{2}-(\\d{4})') AS INTEGER) AS num
-                FROM archivos_preclasificados
-                WHERE cliente_abreviatura = %s
-                  AND anio = %s
-                  AND mes = %s
-                  AND asiento_generado LIKE %s
-            ) x
-        """, (
-            cliente, year, month, f"{month_prefix}%",
-            cliente, year, month, f"{month_prefix}%",
-        ))
-
-        row = cur.fetchone()
-
-    return int(row["max_num"] or 0)
-Esto hace:
-Plain text
-1. mira lo ya distribuido/agrupado
-2. mira lo ya preclasificado
-3. continúa desde el mayor
-5. Para tu caso actual
-Como hasta id=1831 era correcto y el último asiento fue 04-0275, los nuevos deben comenzar desde:
+WITH base AS (
+    SELECT COALESCE(
+        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
+        0
+    ) AS max_num
+    FROM documentos_agrupados
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id < 1832
+),
+ordenados AS (
+    SELECT
+        id,
+        asiento_contable AS asiento_actual,
+        '04-' || LPAD(
+            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
+            4,
+            '0'
+        ) AS asiento_nuevo
+    FROM documentos_agrupados, base
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id >= 1832
+)
+SELECT *
+FROM ordenados
+ORDER BY id
+LIMIT 30;
+Si ves que empieza en:
 Plain text
 04-0276
-Valida si los preclasificados están bien:
+04-0277
+04-0278
+recién actualizas.
+2. Actualizar documentos_agrupados
 SQL
-SELECT asiento_generado, nombre_original, nombre_generado
-FROM archivos_preclasificados
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=4
-ORDER BY asiento_generado
-LIMIT 20;
-Si ya empiezan en 04-0276, no corrijas nada.
-Ahora solo ejecuta:
+WITH base AS (
+    SELECT COALESCE(
+        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
+        0
+    ) AS max_num
+    FROM documentos_agrupados
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id < 1832
+),
+ordenados AS (
+    SELECT
+        id,
+        '04-' || LPAD(
+            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
+            4,
+            '0'
+        ) AS asiento_nuevo
+    FROM documentos_agrupados, base
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id >= 1832
+)
+UPDATE documentos_agrupados da
+SET asiento_contable = o.asiento_nuevo
+FROM ordenados o
+WHERE da.id = o.id;
+3. Actualizar documentos_paginas relacionado
+Como documentos_paginas no tiene id >= 1832, hay que relacionarlo por:
+Plain text
+archivo_fuente
+clave_documental
+cliente/anio/mes
+SQL
+WITH base AS (
+    SELECT COALESCE(
+        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
+        0
+    ) AS max_num
+    FROM documentos_agrupados
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id < 1832
+),
+ordenados AS (
+    SELECT
+        id,
+        archivo_fuente,
+        clave_documental,
+        '04-' || LPAD(
+            (base.max_num + ROW_NUMBER() OVER (ORDER BY id))::TEXT,
+            4,
+            '0'
+        ) AS asiento_nuevo
+    FROM documentos_agrupados, base
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id >= 1832
+)
+UPDATE documentos_paginas dp
+SET asiento_contable = o.asiento_nuevo
+FROM ordenados o
+WHERE dp.cliente_abreviatura = 'BBTEC'
+  AND dp.anio = 2026
+  AND dp.mes = 4
+  AND dp.archivo_fuente = o.archivo_fuente
+  AND dp.clave_documental = o.clave_documental;
+4. Actualizar archivos_preclasificados
+SQL
+WITH base AS (
+    SELECT COALESCE(
+        MAX(CAST(SUBSTRING(asiento_contable FROM '04-(\d+)') AS INTEGER)),
+        0
+    ) AS max_num
+    FROM documentos_agrupados
+    WHERE cliente_abreviatura = 'BBTEC'
+      AND anio = 2026
+      AND mes = 4
+      AND id < 1832
+),
+ordenados AS (
+    SELECT
+        ap.id,
+        '04-' || LPAD(
+            (base.max_num + ROW_NUMBER() OVER (ORDER BY ap.id))::TEXT,
+            4,
+            '0'
+        ) AS asiento_nuevo
+    FROM archivos_preclasificados ap, base
+    WHERE ap.cliente_abreviatura = 'BBTEC'
+      AND ap.anio = 2026
+      AND ap.mes = 4
+)
+UPDATE archivos_preclasificados ap
+SET asiento_generado = o.asiento_nuevo,
+    actualizado_en = NOW()
+FROM ordenados o
+WHERE ap.id = o.id;
+5. Luego marca páginas ya agrupadas
 SQL
 UPDATE documentos_paginas dp
 SET estado = 'agrupado'
@@ -127,13 +159,13 @@ WHERE dp.cliente_abreviatura = 'BBTEC'
       WHERE da.cliente_abreviatura = dp.cliente_abreviatura
         AND da.anio = dp.anio
         AND da.mes = dp.mes
-        AND da.asiento_contable = dp.asiento_contable
         AND da.archivo_fuente = dp.archivo_fuente
         AND da.clave_documental = dp.clave_documental
         AND da.origen = 'fragmentos'
   );
-Luego sigue:
+Después continúas:
 Bash
 python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
 python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
-Así no vuelves a editar manualmente los OTRO que ya corregiste.
+python app/reporte_integridad_lote.py --year 2026 --cliente BBTEC --month 4
+Nota importante: esto corrige la BD. Si ya hay archivos físicos distribuidos con nombres viejos, los nombres físicos no cambiarán automáticamente. Para eso conviene hacerlo antes de distribuir_agrupados.py.
