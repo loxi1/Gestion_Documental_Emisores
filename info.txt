@@ -1,48 +1,92 @@
-Sí. Esos 27 no se distribuirán porque están en:
+Sí: mes 4 ya está cerrado operativamente porque:
 Plain text
-revision_manual_qr
-y además no tienen agrupado:
+DB distribuido = 547
+FS con_oc + sin_oc = 547
+No hay agrupados pendientes
+No hay revision física
+documentos_paginas = agrupado 405
+Lo que está mal es el reporte, no el cierre.
+1. Bug en reporte_integridad_lote.py
+Te dice:
 Plain text
-agrupado_id = NULL
-ruta_final = NULL
-Lo que pasa es esto:
+paginas no clasificadas: 405
+[ALERTA] Hay pendientes por revisar
+pero tus estados son:
 Plain text
-tipo_detectado = guia_remision
-clave_documental = OTRO|asiento|pagina
-estado = revision_manual_qr
-O sea: el sistema sospechó que eran guías, pero no pudo completar serie/número/RUC por QR, entonces las dejó fuera.
-Antes de distribuir tienes 2 caminos:
-Opción segura para cerrar el mes
-Si ya revisaste y aceptas que queden como OTRO, márcalas como clasificado:
-SQL
-UPDATE documentos_paginas
-SET estado = 'clasificado',
-    tipo_detectado = 'otro',
-    requiere_qr = FALSE,
-    qr_procesado = TRUE,
-    qr_error = NULL
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=4
-  AND estado='revision_manual_qr'
-  AND clave_documental LIKE 'OTRO|%';
-Luego:
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
-python app/reporte_integridad_lote.py --year 2026 --cliente BBTEC --month 4
-Opción más exacta
-Editar una por una:
-Bash
-python app/editar_pagina_manual.py --id 936
-Pero para cerrar el mes 4 rápido, la primera opción es razonable porque ya tienen clave OTRO|... y no se pierden.
-Antes de actualizar puedes contar:
+agrupado: 405
+Entonces el reporte está contando agrupado como “no clasificado”. Debe excluirlo.
+Cambia la consulta de “páginas no clasificadas” a:
 SQL
 SELECT COUNT(*)
 FROM documentos_paginas
-WHERE cliente_abreviatura='BBTEC'
-  AND anio=2026
-  AND mes=4
-  AND estado='revision_manual_qr'
-  AND clave_documental LIKE 'OTRO|%';
-Debe dar 27.
+WHERE cliente_abreviatura=%s
+  AND anio=%s
+  AND mes=%s
+  AND estado IN ('separado', 'revision_manual', 'revision_manual_qr');
+No debe contar:
+Plain text
+clasificado
+agrupado
+2. Estado final recomendado
+Desde ahora el cierre ideal debe ser:
+Plain text
+documentos_paginas:
+agrupado = todo lo que ya pasó a documentos_agrupados
+revision_manual / revision_manual_qr = pendientes reales
+clasificado = listo para agrupar, pero aún no agrupado
+Entonces mes 4 está bien:
+Plain text
+agrupado: 405
+3. Meses anteriores
+Mes 1, 2 y 3 tienen clasificado porque antes no actualizábamos a agrupado. Probablemente sí están distribuidos.
+Puedes normalizarlos con:
+SQL
+UPDATE documentos_paginas dp
+SET estado = 'agrupado'
+WHERE dp.cliente_abreviatura = 'BBTEC'
+  AND dp.anio = 2026
+  AND dp.mes IN (1,2,3)
+  AND dp.estado = 'clasificado'
+  AND EXISTS (
+      SELECT 1
+      FROM documentos_agrupados da
+      WHERE da.cliente_abreviatura = dp.cliente_abreviatura
+        AND da.anio = dp.anio
+        AND da.mes = dp.mes
+        AND da.asiento_contable = dp.asiento_contable
+        AND da.archivo_fuente = dp.archivo_fuente
+        AND da.clave_documental = dp.clave_documental
+        AND da.origen = 'fragmentos'
+        AND da.estado LIKE 'distribuido%'
+  );
+Pero los revision_manual y revision_manual_qr de meses 1, 2 y 3 sí son pendientes reales si no tienen agrupado.
+4. Cambio final recomendado en reporte_integridad_lote.py
+La lógica debe ser:
+Plain text
+pendientes reales =
+estado IN ('separado', 'revision_manual', 'revision_manual_qr')
+No incluir:
+Plain text
+clasificado
+agrupado
+Porque:
+clasificado solo significa pendiente de agrupar
+agrupado ya terminó su etapa
+5. Sobre duplicados
+No bloquean el cierre. Son observaciones.
+Algunos parecen duplicados reales o reingresos por documentos sin nombre, por ejemplo:
+Plain text
+FACTURA|20100053455|FCT1|5045679
+FACTURA|20600211618|F001|7164
+OC|003211
+Pero como:
+Plain text
+DB = FS
+No hay no distribuidos
+el lote está cerrado con observaciones.
+Conclusión
+Sí, mes 4 quedó cerrado.
+Solo corrige:
+Plain text
+reporte_integridad_lote.py
+para que no marque agrupado como pendiente.
