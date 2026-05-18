@@ -1,33 +1,49 @@
-ejecute del 1 al 5 hasta el 4 salio que si actualize pero en el 5 no actualizo ninguno se porque previamente ejecute el codigo anterior te muestro los dos cambios ademas ver el repo y en especial grupar_fragmentos.py y dime si existen cambios:
-gestiondocumental_mvp=# UPDATE documentos_paginas dp SET estado = 'agrupado' WHERE dp.cliente_abreviatura = 'BBTEC' AND dp.anio = 2026 AND
- dp.mes = 4 AND dp.estado = 'clasificado' AND EXISTS ( SELECT 1 FROM documentos_agrupados da WHERE da.cliente_abreviatura = dp.cliente_abr
-eviatura AND da.anio = dp.anio AND da.mes = dp.mes AND da.archivo_fuente = dp.archivo_fuente AND da.clave_documental = dp.clave_documental
- AND da.origen = 'fragmentos' );
-UPDATE 0
-gestiondocumental_mvp=#
+Ya habia corregido lo pendientes manualmente:
+BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 4
 
-este ultimo me sale asi porque creo que ejecute este:
-UPDATE documentos_paginas dp
-SET estado = 'agrupado'
-WHERE dp.cliente_abreviatura = 'BBTEC'
-  AND dp.anio = 2026
-  AND dp.mes = 4
-  AND dp.estado = 'clasificado'
-  AND EXISTS (
-      SELECT 1
-      FROM documentos_agrupados da
-      WHERE da.cliente_abreviatura = dp.cliente_abreviatura
-        AND da.anio = dp.anio
-        AND da.mes = dp.mes
-        AND da.asiento_contable = dp.asiento_contable
-        AND da.archivo_fuente = dp.archivo_fuente
-        AND da.clave_documental = dp.clave_documental
-        AND da.origen = 'fragmentos'
-  );
+Registros para revisar: 1
 
-que puedo hacer continuar 
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente BBTEC --month 4
-python app/distribuir_agrupados.py --year 2026 --cliente BBTEC --month 4
-python app/reporte_integridad_lote.py --year 2026 --cliente BBTEC --month 4
-Nota importante: esto corrige la BD. Si ya hay archivos físicos distribuidos con nombres viejos, los nombres físicos no cambiarán automáticamente. Para eso conviene hacerlo antes de distribuir_agrupados.py.
+========================================================================================================================
+ID       : 1251
+Asiento  : 04-0366
+Archivo  : 04-0366 BBTEC SIN_NOMBRE 20260511201216067.pdf
+Página   : 4
+Ruta     : 04-0366 BBTEC SIN_NOMBRE 20260511201216067_P4.pdf
+Tipo     : otro
+Clave    : OTRO|04-0366|P004
+OC       : None
+OS       : None
+RUC      : None
+Serie    : None
+Número   : None
+
+Editar   : python app/editar_pagina_manual.py --id 1251
+Validar  : python app/marcar_otro_validado.py --id 1251
+
+Reporte finalizado.
+
+(.venv)
+BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python app/marcar_otro_validado.py --id 1251
+[OK] Otro validado como clasificado. ID=1251
+(.venv)
+BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)
+$ python app/reporte_revision_manual.py --year 2026 --cliente BBTEC --month 4
+
+Registros para revisar: 0
+
+
+Reporte finalizado.
+
+(.venv)
+
+tengo este select en psql
+gestiondocumental_mvp=# SELECT estado, COUNT(*) FROM documentos_paginas WHERE cliente_abreviatura='BBTEC' AND anio=2026 AND mes=4 GROUP BY
+ estado;
+       estado       | count
+--------------------+-------
+ agrupado           |   167
+ revision_manual_qr |    27
+ clasificado        |   211
+(3 rows)
