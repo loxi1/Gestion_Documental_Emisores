@@ -62,7 +62,7 @@ def build_filename(asiento: str, clave: str, paginas: list[int], bloque: int) ->
 
     tipo = data["tipo"]
 
-    if tipo in ("FACTURA", "GUIA_REMISION"):
+    if tipo in ("FACTURA", "GUIA_REMISION", "NOTA_CREDITO"):
         return (
             f"{asiento} {tipo} {data['serie']} {data['numero']} "
             f"{data['ruc']} {rango}{sufijo_bloque}.pdf"

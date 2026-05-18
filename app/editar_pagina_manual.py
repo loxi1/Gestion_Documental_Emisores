@@ -49,7 +49,7 @@ def build_clave(tipo, ruc=None, serie=None, numero=None, banco=None, codigo=None
         return f"PAGO_DETRACCION|{banco or 'BN'}|{codigo or 'SIN_CODIGO'}"
     
     if tipo == "nota_credito":
-        clave = f"NC|{ruc}|{serie}|{numero}"
+        return f"NC|{ruc}|{serie}|{numero}"
 
     if tipo == "otro":
         return f"OTRO|{codigo or 'SIN_CODIGO'}"
@@ -121,7 +121,7 @@ def editar_interactivo(page_id: int):
     banco = row["banco_abreviatura"]
     codigo = row["codigo_operacion"]
 
-    if tipo in ("factura", "guia_remision"):
+    if tipo in ("factura", "guia_remision", "nota_credito"):
         serie = input_default("Serie", serie)
         numero = input_default("Número", numero)
         ruc = input_default("RUC emisor", ruc)
