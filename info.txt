@@ -1,35 +1,5 @@
-Correcto. La lógica debe ser:
-Plain text
-1. Buscar proveedor en tabla proveedores
-2. Si existe, usar razon_social
-3. Si no existe, consultar API
-4. Si API responde, insertar/actualizar proveedores
-5. Guardar razon_social_emisor en documentos_paginas
-Como ya existe:
-Plain text
-20418896915 -> MAPFRE PERU
-entonces no debería llamar API, solo tomarlo de BD.
-Cambio en clasificar_paginas.py
-Arriba:
-Python
-from core.proveedor_service import get_or_fetch_proveedor
-Después de enrich_page(...):
-Python
-ruc = data.get("ruc")
-
-if ruc and (
-    not data.get("razon_social_emisor")
-    or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
-):
-    proveedor = get_or_fetch_proveedor(ruc)
-
-    if proveedor and proveedor.get("nombre"):
-        data["razon_social_emisor"] = proveedor["nombre"]
-Y en el UPDATE usa:
-Python
-data.get("razon_social_emisor")
-Para corregir lo ya clasificado en BD
-Ejecuta:
+Claro, el error es porque documentos_agrupados no tiene columna ruc. El RUC está dentro de clave_documental.
+Usa esta consulta:
 SQL
 UPDATE documentos_paginas dp
 SET razon_social_emisor = p.razon_social
@@ -43,23 +13,7 @@ WHERE dp.ruc_emisor = p.ruc
         OR dp.razon_social_emisor = ''
         OR dp.razon_social_emisor = 'SIN_RAZON_SOCIAL'
       );
-Y para documentos_agrupados:
-SQL
-UPDATE documentos_agrupados da
-SET nombre_archivo = REPLACE(nombre_archivo, 'SIN_RAZON_SOCIAL', p.razon_social)
-FROM proveedores p
-WHERE da.ruc = p.ruc;
-Pero ojo: si tu tabla documentos_agrupados no tiene columna ruc, mejor no hagas ese segundo UPDATE así.
-En tu caso, lo más limpio es:
-Actualizar documentos_paginas
-Borrar salida sin_oc/con_oc del lote
-Reagrupar/re-distribuir limpio
-Para este lote:
-Bash
-rm -rf data/salida/2026/CIMA/01/provisional
-rm -rf data/salida/2026/CIMA/01/con_oc
-rm -rf data/salida/2026/CIMA/01/sin_oc
-Luego en SQL:
+Luego lo más limpio es regenerar agrupados y distribución:
 SQL
 DELETE FROM documentos_agrupados
 WHERE cliente_abreviatura='CIMA'
@@ -72,7 +26,27 @@ WHERE cliente_abreviatura='CIMA'
   AND anio=2026
   AND mes=1
   AND estado='agrupado';
-Y corres:
+Y borrar salidas físicas:
+Bash
+rm -rf data/salida/2026/CIMA/01/provisional
+rm -rf data/salida/2026/CIMA/01/con_oc
+rm -rf data/salida/2026/CIMA/01/sin_oc
+Después:
 Bash
 python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
 python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
+Para que no vuelva a pasar, en clasificar_paginas.py agrega:
+Python
+from core.proveedor_service import get_or_fetch_proveedor
+y después de enrich_page(...):
+Python
+ruc = data.get("ruc")
+
+if ruc and (
+    not data.get("razon_social_emisor")
+    or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
+):
+    proveedor = get_or_fetch_proveedor(ruc)
+
+    if proveedor and proveedor.get("nombre"):
+        data["razon_social_emisor"] = proveedor["nombre"]
