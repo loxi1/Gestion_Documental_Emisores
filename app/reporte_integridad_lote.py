@@ -80,7 +80,7 @@ def reporte(year: int, cliente: str, month: int):
             SELECT COUNT(*)
             FROM documentos_paginas
             WHERE cliente_abreviatura=%s AND anio=%s AND mes=%s
-              AND estado <> 'clasificado'
+              AND estado IN ('separado', 'revision_manual', 'revision_manual_qr')
         """, (cliente, year, month))
 
         paginas_sin_clave = scalar(cur, """
