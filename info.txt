@@ -1,116 +1,60 @@
-Sí, el problema NO es el PDF.
-El PDF sí tiene el RUC correctamente visible:
-Plain text
-R.U.C. N° 20418896915
-y además tiene razón social implícita:
-Plain text
-MAPFRE PERU COMPAÑÍA DE SEGUROS Y REASEGUROS
-�
-01-0001 CIMA FACTURA F051 221763 20418896915 SIN_RAZON_SOCIAL.pdf
-Entonces el problema está en la lógica de enriquecimiento (document_enricher.py) o en cómo clasificar_paginas.py llama al proveedor.
-Lo que probablemente está pasando en tu repo actualizado:
-sí detecta:
-tipo
-serie
-número
-ruc
-pero NO ejecuta:
+Correcto. Entonces ahí está el vacío: la razón social solo se completa cuando editas manualmente, no durante el proceso automático.
+La mejora correcta es poner la llamada a proveedor en clasificar_paginas.py, no en document_enricher.py.
+Cambio puntual en clasificar_paginas.py
+Arriba agrega:
 Python
-get_or_fetch_proveedor(ruc)
-o sí lo ejecuta pero:
-falla silenciosamente
-no actualiza razon_social
-o el UPDATE no se hace en documentos_paginas
-Lo correcto
-Cuando detectes:
+from core.proveedor_service import get_or_fetch_proveedor
+Después de:
 Python
-tipo = factura
-ruc = 20418896915
-debe pasar esto:
+data = enrich_page(
+    row["texto_extraido"] or "",
+    row["archivo_fuente"],
+    cliente
+)
+agrega:
 Python
-proveedor = get_or_fetch_proveedor(ruc)
-y luego:
+if data.get("ruc") and (
+    not data.get("razon_social_emisor")
+    or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
+):
+    proveedor = get_or_fetch_proveedor(data["ruc"])
+
+    if proveedor:
+        data["razon_social_emisor"] = proveedor.get("nombre")
+Y valida que en el UPDATE estés guardando:
 Python
-razon_social = proveedor["nombre"]
-y guardar:
+data["razon_social_emisor"]
+Actualmente probablemente tienes:
 Python
-razon_social_emisor
-Revisa esto en document_enricher.py
-Debe existir algo parecido a:
-Python
-proveedor = get_or_fetch_proveedor(ruc)
-y luego:
-Python
-if proveedor:
-    razon_social = proveedor.get("nombre")
-El problema más probable
-Tu código seguramente tiene algo así:
-Python
-if ruc and not razon_social:
-PERO:
-Python
-razon_social = ""
+data["razon_social_emisor"]
 o:
 Python
-razon_social = "SIN_RAZON_SOCIAL"
-entonces nunca entra.
-SOLUCIÓN FINAL
-Busca esto:
+data.get("razon_social_emisor")
+Debe quedar así:
 Python
-if ruc and not razon_social:
-y reemplázalo por:
+data.get("razon_social_emisor")
+Bloque final recomendado
 Python
-if ruc and (
-    not razon_social
-    or razon_social == "SIN_RAZON_SOCIAL"
-):
-Luego esto:
-Python
-proveedor = get_or_fetch_proveedor(ruc)
+data = enrich_page(
+    row["texto_extraido"] or "",
+    row["archivo_fuente"],
+    cliente
+)
 
-if proveedor:
-    razon_social = proveedor.get("nombre")
-También validar UPDATE
-Debe guardar en DB:
-Python
-cur.execute("""
-    UPDATE documentos_paginas
-    SET razon_social_emisor = %s
-    WHERE id = %s
-""", (
-    razon_social,
-    row["id"],
-))
-Qué pasó en tu caso
-Tu pipeline sí detectó:
-Plain text
-FACTURA F051 221763 20418896915
-pero como razon_social_emisor ya tenía:
-Plain text
-SIN_RAZON_SOCIAL
-el enriquecedor nunca volvió a consultar APISPERU.
-Por eso terminó así:
-Plain text
-01-0001 CIMA FACTURA F051 221763 20418896915 SIN_RAZON_SOCIAL.pdf
-Después del cambio
-Solo vuelve a ejecutar:
+if data.get("ruc") and (
+    not data.get("razon_social_emisor")
+    or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
+):
+    proveedor = get_or_fetch_proveedor(data["ruc"])
+
+    if proveedor:
+        data["razon_social_emisor"] = proveedor.get("nombre")
+Con eso al clasificar:
 Bash
 python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
-o mejor:
+ya debería llenar razon_social_emisor.
+Pero como ya distribuiste, para arreglar los nombres físicos debes hacer:
 Bash
-python app/procesar_qr_pendientes.py --year 2026 --cliente CIMA --month 1
-si el QR ya tiene RUC.
-BONUS (muy recomendado)
-En distribuir_agrupados.py:
-cambia esto:
-Python
-razon = safe_text(razones.get(data["ruc"]))
-por:
-Python
-razon = safe_text(
-    razones.get(data["ruc"]) or "SIN_RAZON_SOCIAL"
-)
-para evitar:
-Plain text
-None.pdf
-o nombres vacíos.
+python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
+solo si antes limpias las salidas distribuidas, o te generará duplicados.
+Mejor para este caso: corregir primero BD y luego redistribuir limpio.
