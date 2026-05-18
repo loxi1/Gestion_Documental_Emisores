@@ -37,8 +37,12 @@ def process(year: int, cliente: str, month: int):
             or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
         ):
             proveedor = get_or_fetch_proveedor(ruc)
+
             if proveedor:
-                data["razon_social_emisor"] = proveedor["razon_social"]
+                razon = proveedor.get("nombre") or proveedor.get("razon_social")
+
+                if razon:
+                    data["razon_social_emisor"] = razon
 
 
         requiere_qr = (
@@ -87,7 +91,7 @@ def process(year: int, cliente: str, month: int):
                 data["serie"],
                 data["numero"],
                 data["ruc"],
-                data["razon_social_emisor"],
+                data.get("razon_social_emisor"),
                 data["orden_servicio"],
                 data["orden_compra"],
                 data["clave_documental"],
