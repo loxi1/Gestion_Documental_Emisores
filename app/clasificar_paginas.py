@@ -2,6 +2,7 @@ import argparse
 
 from core.db import get_cursor
 from core.document_enricher import enrich_page
+from core.proveedor_service import get_or_fetch_proveedor
 
 
 def process(year: int, cliente: str, month: int):
@@ -28,6 +29,17 @@ def process(year: int, cliente: str, month: int):
             cliente,
             pagina=row["pagina"],
         )
+
+        ruc = data.get("ruc")
+
+        if ruc and (
+            not data.get("razon_social_emisor")
+            or data.get("razon_social_emisor") == "SIN_RAZON_SOCIAL"
+        ):
+            proveedor = get_or_fetch_proveedor(ruc)
+            if proveedor:
+                data["razon_social_emisor"] = proveedor["razon_social"]
+
 
         requiere_qr = (
             data["tipo"] == "guia_remision"
