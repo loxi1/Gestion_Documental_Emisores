@@ -1,78 +1,105 @@
-Sí. Como ya fueron distribuidos, lo correcto es “retroceder” esos documentos específicos y volver a procesarlos, no limpiar todo el mes.
-Hazlo así:
-1. Identifica los IDs afectados
-Por ejemplo:
-SQL
-SELECT id, asiento_contable, archivo_fuente, tipo_detectado, estado
-FROM documentos_paginas
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1
-  AND id IN (2063, 2064, 2065);
-2. Borra SOLO los agrupados relacionados
-Primero revisa:
-SQL
-SELECT id, clave_documental, ruta_final
-FROM documentos_agrupados
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1
-  AND asiento_contable IN (
-      SELECT asiento_contable
-      FROM documentos_paginas
-      WHERE id IN (2063,2064,2065)
-  );
-Luego elimina:
-SQL
-DELETE FROM documentos_agrupados
-WHERE cliente_abreviatura='CIMA'
-  AND anio=2026
-  AND mes=1
-  AND asiento_contable IN (
-      SELECT asiento_contable
-      FROM documentos_paginas
-      WHERE id IN (2063,2064,2065)
-  );
-3. Borra archivos físicos distribuidos
-Sí, elimina manualmente los PDFs incorrectos de:
-Plain text
-data/salida/2026/CIMA/01/sin_oc/
-o con_oc/ si corresponde.
-4. Regresa páginas a separado
-SQL
-UPDATE documentos_paginas
-SET
-    estado='separado',
-    tipo_detectado=NULL,
-    serie=NULL,
-    numero=NULL,
-    ruc_emisor=NULL,
-    razon_social_emisor=NULL,
-    clave_documental=NULL,
-    requiere_qr=FALSE,
-    qr_procesado=FALSE,
-    qr_raw=NULL,
-    qr_error=NULL
-WHERE id IN (2063,2064,2065);
-5. Reclasifica
-Bash
-python app/clasificar_paginas.py --year 2026 --cliente CIMA --month 1
-6. Reagrupar
-Bash
-python app/agrupar_fragmentos.py --year 2026 --cliente CIMA --month 1
-7. Redistribuir
-Bash
-python app/distribuir_agrupados.py --year 2026 --cliente CIMA --month 1
-8. Verifica
-Bash
-python app/reporte_integridad_lote.py --year 2026 --cliente CIMA --month 1
-Recomendación importante
-Ya llegaste a un punto donde conviene crear:
-Plain text
-reprocesar_documento.py --id 2063
-Que haga automáticamente:
-borrar agrupados
-borrar archivo final
-resetear documentos_paginas
-regresar a separado
-Porque ahora ya tienes flujo de correcciones reales.
+Hay un error directo en parse_clave():
+Python
+"ruc": parts[1],
+pero tu variable se llama:
+Python
+p = clave.split("|")
+Debe ser p, no parts.
+Usa esta versión corregida:
+Python
+def parse_clave(clave: str) -> dict:
+    p = (clave or "").split("|")
+
+    if p[0] == "FACTURA" and len(p) >= 4:
+        return {
+            "tipo": "FACTURA",
+            "ruc": p[1],
+            "serie": p[2],
+            "numero": p[3],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "GUIA" and len(p) >= 4:
+        return {
+            "tipo": "GUIA_REMISION",
+            "ruc": p[1],
+            "serie": p[2],
+            "numero": p[3],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "NC" and len(p) >= 4:
+        return {
+            "tipo": "NOTA_CREDITO",
+            "ruc": p[1],
+            "serie": p[2],
+            "numero": p[3],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "OC" and len(p) >= 2:
+        return {
+            "tipo": "ORDEN_COMPRA",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "OS" and len(p) >= 2:
+        return {
+            "tipo": "ORDEN_SERVICIO",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "NI" and len(p) >= 2:
+        return {
+            "tipo": "NOTA_INGRESO",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "PAGO_TRANSFERENCIA":
+        return {
+            "tipo": "PAGO_TRANSFERENCIA",
+            "banco": p[1] if len(p) > 1 else "SIN_BANCO",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
+    if p[0] == "PAGO_DETRACCION":
+        if len(p) >= 4:
+            return {
+                "tipo": "PAGO_DETRACCION",
+                "ruc": p[1],
+                "serie": p[2],
+                "numero": p[3],
+                "banco": "BN",
+                "codigo": None,
+            }
+
+        return {
+            "tipo": "PAGO_DETRACCION",
+            "banco": p[1] if len(p) > 1 else "BN",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+        }
+
+    if p[0] == "OTRO":
+        return {
+            "tipo": "OTRO",
+            "numero": p[1] if len(p) > 1 else "SIN_ASIENTO",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+            "banco": None,
+        }
+
+    return {
+        "tipo": "OTRO",
+        "numero": "SIN_ASIENTO",
+        "codigo": "SIN_CODIGO",
+        "banco": None,
+    }
+Tus nombre_con_oc() y nombre_sin_oc() están bien con NOTA_CREDITO; solo fallaban porque parse_clave() usaba parts inexistente.
