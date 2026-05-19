@@ -85,7 +85,23 @@ def editar(extraido_id: int):
     ruc = input_default("RUC emisor", row["ruc_emisor"])
 
     proveedor = get_or_fetch_proveedor(ruc) if ruc else None
-    razon_default = row["razon_social_emisor"] or (proveedor["nombre"] if proveedor else None)
+
+    razon_api = None
+
+    if proveedor:
+        razon_api = (
+            proveedor.get("razon_social")
+            or proveedor.get("nombre")
+            or proveedor.get("nombre_o_razon_social")
+        )
+
+    razon_default = (
+        row["razon_social_emisor"]
+        if row["razon_social_emisor"]
+        and row["razon_social_emisor"] != "SIN_RAZON_SOCIAL"
+        else razon_api
+    )
+    
     razon = input_default("Razón social", razon_default)
 
     origen = Path(row["ruta_provisional"])
