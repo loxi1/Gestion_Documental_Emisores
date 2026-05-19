@@ -30,8 +30,8 @@ def asiento_to_int(asiento: str | None) -> int | None:
     return int(m.group(2))
 
 
-def format_asiento(month: int, numero: int) -> str:
-    return f"{month:02d}-{numero:04d}"
+def format_asiento(prefix: int, numero: int) -> str:
+    return f"{prefix:02d}-{numero:04d}"
 
 
 def unique_path(path: Path) -> Path:
@@ -160,7 +160,7 @@ def registrar_preclasificado(
         ))
 
 
-def preclasificar(year: int, cliente: str, month: int, mover: bool = False):
+def preclasificar(year: int, cliente: str, month: int, asiento_prefix: int | None = None, mover: bool = False):
     cliente = cliente.upper()
     month_str = f"{month:02d}"
 
@@ -179,17 +179,19 @@ def preclasificar(year: int, cliente: str, month: int, mover: bool = False):
     print(f"Destino pendientes : {pendientes}")
     print(f"PDF encontrados    : {len(pdfs)}")
 
+    prefix = asiento_prefix if asiento_prefix is not None else month
+
     max_num = get_max_asiento(cliente, year, month)
     siguiente = max_num + 1
 
-    print(f"Mayor asiento actual: {format_asiento(month, max_num) if max_num else 'NINGUNO'}")
-    print(f"Siguiente asiento   : {format_asiento(month, siguiente)}")
+    print(f"Mayor asiento actual: {format_asiento(prefix, max_num) if max_num else 'NINGUNO'}")
+    print(f"Siguiente asiento   : {format_asiento(prefix, siguiente)}")
 
     procesados = 0
     omitidos = 0
 
     for pdf in pdfs:
-        asiento = format_asiento(month, siguiente)
+        asiento = format_asiento(prefix, siguiente)
         ref = clean_name(pdf.stem)
 
         nuevo_nombre = f"{asiento} {cliente} SIN_NOMBRE {ref}.pdf"
@@ -232,6 +234,7 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--cliente", required=True)
     parser.add_argument("--month", type=int, required=True)
+    parser.add_argument("--asiento-prefix", type=int, default=None)
 
     parser.add_argument(
         "--mover",
@@ -245,5 +248,6 @@ if __name__ == "__main__":
         year=args.year,
         cliente=args.cliente,
         month=args.month,
+        asiento_prefix=args.asiento_prefix,
         mover=args.mover,
     )

@@ -1,105 +1,237 @@
-Hay un error directo en parse_clave():
-Python
-"ruc": parts[1],
-pero tu variable se llama:
-Python
-p = clave.split("|")
-Debe ser p, no parts.
-Usa esta versión corregida:
-Python
-def parse_clave(clave: str) -> dict:
-    p = (clave or "").split("|")
+$ python app/editar_extraido_manual.py --id 1108
+====================================================================================================
+ID        : 1108
+Asiento   : None
+Archivo   : 04-042 F050 742713 20418896915 MAPFRE PERU COPAÑIA DE SEGUROS Y REASEGUROS.pdf
+Ruta      : data\trabajo\2026\HUANCA\01\pendientes\04-042 F050 742713 20418896915 MAPFRE PERU COPAÑIA DE SEGUROS Y REASEGUROS.pdf
+Tipo      : otro
+Motivo    : Nombre no cumple formato de factura 1 página
+====================================================================================================
+Tipo [otro]: factura
+Asiento []: 04-0042
+Serie []: F050
+Número []: 742713
+RUC emisor []: 20418896915
+Razón social [SIN_RAZON_SOCIAL]:
 
-    if p[0] == "FACTURA" and len(p) >= 4:
-        return {
-            "tipo": "FACTURA",
-            "ruc": p[1],
-            "serie": p[2],
-            "numero": p[3],
-            "banco": None,
-            "codigo": None,
-        }
+editar_extraido_manual.py
+import argparse
+import shutil
+from pathlib import Path
 
-    if p[0] == "GUIA" and len(p) >= 4:
-        return {
-            "tipo": "GUIA_REMISION",
-            "ruc": p[1],
-            "serie": p[2],
-            "numero": p[3],
-            "banco": None,
-            "codigo": None,
-        }
+from slugify import slugify
 
-    if p[0] == "NC" and len(p) >= 4:
-        return {
-            "tipo": "NOTA_CREDITO",
-            "ruc": p[1],
-            "serie": p[2],
-            "numero": p[3],
-            "banco": None,
-            "codigo": None,
-        }
+from core.db import get_cursor
+from core.proveedor_service import get_or_fetch_proveedor
 
-    if p[0] == "OC" and len(p) >= 2:
-        return {
-            "tipo": "ORDEN_COMPRA",
-            "numero": p[1],
-            "banco": None,
-            "codigo": None,
-        }
+BASE_SALIDA = Path("data/salida")
 
-    if p[0] == "OS" and len(p) >= 2:
-        return {
-            "tipo": "ORDEN_SERVICIO",
-            "numero": p[1],
-            "banco": None,
-            "codigo": None,
-        }
 
-    if p[0] == "NI" and len(p) >= 2:
-        return {
-            "tipo": "NOTA_INGRESO",
-            "numero": p[1],
-            "banco": None,
-            "codigo": None,
-        }
+def clean(value: str | None) -> str:
+    return slugify(value or "SIN_RAZON_SOCIAL", separator="_").upper()
 
-    if p[0] == "PAGO_TRANSFERENCIA":
-        return {
-            "tipo": "PAGO_TRANSFERENCIA",
-            "banco": p[1] if len(p) > 1 else "SIN_BANCO",
-            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
-        }
 
-    if p[0] == "PAGO_DETRACCION":
-        if len(p) >= 4:
-            return {
-                "tipo": "PAGO_DETRACCION",
-                "ruc": p[1],
-                "serie": p[2],
-                "numero": p[3],
-                "banco": "BN",
-                "codigo": None,
-            }
+def input_default(label: str, default=None):
+    value = input(f"{label} [{default or ''}]: ").strip()
+    return value if value else default
 
-        return {
-            "tipo": "PAGO_DETRACCION",
-            "banco": p[1] if len(p) > 1 else "BN",
-            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
-        }
 
-    if p[0] == "OTRO":
-        return {
-            "tipo": "OTRO",
-            "numero": p[1] if len(p) > 1 else "SIN_ASIENTO",
-            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
-            "banco": None,
-        }
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
 
-    return {
-        "tipo": "OTRO",
-        "numero": "SIN_ASIENTO",
-        "codigo": "SIN_CODIGO",
-        "banco": None,
-    }
-Tus nombre_con_oc() y nombre_sin_oc() están bien con NOTA_CREDITO; solo fallaban porque parse_clave() usaba parts inexistente.
+    base = path.with_suffix("")
+    ext = path.suffix
+    i = 2
+
+    while True:
+        new_path = Path(f"{base}_{i}{ext}")
+        if not new_path.exists():
+            return new_path
+        i += 1
+
+
+def leer_extraido(extraido_id: int):
+    with get_cursor() as (_, cur):
+        cur.execute("""
+            SELECT
+                de.*,
+                lp.cliente_abreviatura,
+                lp.anio,
+                lp.mes
+            FROM documentos_extraidos de
+            INNER JOIN lotes_procesamiento lp ON lp.id = de.lote_id
+            WHERE de.id = %s
+        """, (extraido_id,))
+        return cur.fetchone()
+
+
+def nombre_factura(cliente, asiento, serie, numero, ruc, razon):
+    return f"{asiento} {cliente} FACTURA {serie} {numero} {ruc} {clean(razon)}.pdf"
+
+
+def editar(extraido_id: int):
+    row = leer_extraido(extraido_id)
+
+    if not row:
+        print(f"[NO ENCONTRADO] ID {extraido_id}")
+        return
+
+    cliente = row["cliente_abreviatura"]
+    year = row["anio"]
+    month = row["mes"]
+
+    print("=" * 100)
+    print(f"ID        : {row['id']}")
+    print(f"Asiento   : {row['asiento_contable']}")
+    print(f"Archivo   : {row['nombre_provisional']}")
+    print(f"Ruta      : {row['ruta_provisional']}")
+    print(f"Tipo      : {row['tipo_documental']}")
+    print(f"Motivo    : {row['motivo_revision']}")
+    print("=" * 100)
+
+    tipo = input_default("Tipo", row["tipo_documental"] or "factura").lower()
+
+    if tipo != "factura":
+        print("[INFO] Para marcar como otro usa marcar_extraido_otro.py")
+        return
+
+    asiento = input_default("Asiento", row["asiento_contable"])
+    serie = input_default("Serie", row["serie"])
+    numero = input_default("Número", row["numero"])
+    ruc = input_default("RUC emisor", row["ruc_emisor"])
+
+    proveedor = get_or_fetch_proveedor(ruc) if ruc else None
+    razon_default = row["razon_social_emisor"] or (proveedor["nombre"] if proveedor else None)
+    razon = input_default("Razón social", razon_default)
+
+    origen = Path(row["ruta_provisional"])
+
+    if not origen.exists():
+        print(f"[ERROR] No existe archivo origen: {origen}")
+        return
+
+    destino_dir = BASE_SALIDA / str(year) / cliente / f"{month:02d}" / "sin_oc"
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    final_name = nombre_factura(cliente, asiento, serie, numero, ruc, razon)
+    destino = unique_path(destino_dir / final_name)
+
+    print("\nResumen:")
+    print(f"Origen : {origen}")
+    print(f"Destino: {destino}")
+
+    confirmar = input("\n¿Guardar y mover? s/n [s]: ").strip().lower() or "s"
+
+    if confirmar != "s":
+        print("[CANCELADO]")
+        return
+
+    shutil.move(str(origen), str(destino))
+
+    clave = f"FACTURA|{ruc}|{serie}|{numero}"
+
+    with get_cursor(commit=True) as (_, cur):
+        cur.execute("""
+            UPDATE documentos_extraidos
+            SET asiento_contable = %s,
+                tipo_documental = 'factura',
+                serie = %s,
+                numero = %s,
+                ruc_emisor = %s,
+                razon_social_emisor = %s,
+                nombre_final = %s,
+                ruta_final = %s,
+                estado = 'procesado_sin_oc',
+                requiere_revision = FALSE,
+                motivo_revision = NULL,
+                actualizado_en = NOW()
+            WHERE id = %s
+        """, (
+            asiento,
+            serie,
+            numero,
+            ruc,
+            razon,
+            destino.name,
+            str(destino),
+            extraido_id,
+        ))
+
+        cur.execute("""
+            INSERT INTO documentos_agrupados (
+                asiento_contable,
+                archivo_fuente,
+                clave_documental,
+                tipo_documental,
+                serie,
+                numero,
+                pagina_inicio,
+                pagina_fin,
+                paginas,
+                nombre_archivo,
+                ruta_archivo,
+                ruta_final,
+                estado,
+                cliente_abreviatura,
+                anio,
+                mes,
+                origen
+            )
+            VALUES (
+                %s, %s, %s, 'FACTURA', %s, %s, 1, 1, '1',
+                %s, %s, %s, 'distribuido_sin_oc',
+                %s, %s, %s, 'factura_1_pagina_manual'
+            )
+            ON CONFLICT DO NOTHING
+        """, (
+            asiento,
+            row["nombre_provisional"],
+            clave,
+            serie,
+            numero,
+            destino.name,
+            str(destino),
+            str(destino),
+            cliente,
+            year,
+            month,
+        ))
+
+    print(f"[OK] Extraído actualizado como factura: {destino.name}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--id", type=int, required=True)
+    args = parser.parse_args()
+
+    editar(args.id)
+
+porque no lo encontro con el api por favor.
+en el ejemplo yo tengo que poner manualmente la razon social pero deberia de copiar automaticamente en la casilla razon social:
+$ python app/editar_extraido_manual.py --id 1041
+====================================================================================================
+ID        : 1041
+Asiento   : None
+Archivo   : 04-0053 10422377129 NAVARRO MIRANDA GABRIELA GENOVEVA.pdf
+Ruta      : data\trabajo\2026\HUANCA\01\pendientes\04-0053 10422377129 NAVARRO MIRANDA GABRIELA GENOVEVA.pdf
+Tipo      : otro
+Motivo    : Nombre no cumple formato de factura 1 página
+====================================================================================================
+Tipo [otro]: factura
+Asiento []: 04-0053
+Serie []: F001
+Número []: 581
+RUC emisor []: 10422377129
+[APISPERU] OK 10422377129 -> NAVARRO MIRANDA GABRIELA GENOVEVA
+Razón social [SIN_RAZON_SOCIAL]: NAVARRO MIRANDA GABRIELA GENOVEVA
+
+Resumen:
+Origen : data\trabajo\2026\HUANCA\01\pendientes\04-0053 10422377129 NAVARRO MIRANDA GABRIELA GENOVEVA.pdf
+Destino: data\salida\2026\HUANCA\01\sin_oc\04-0053 HUANCA FACTURA F001 581 10422377129 NAVARRO_MIRANDA_GABRIELA_GENOVEVA.pdf
+
+¿Guardar y mover? s/n [s]: s
+[OK] Extraído actualizado como factura: 04-0053 HUANCA FACTURA F001 581 10422377129 NAVARRO_MIRANDA_GABRIELA_GENOVEVA.pdf
+(.venv)
+BBTI 01@PROGRAMACION MINGW64 /C/D/Proyectos/GestionDocumental/Gestion_Documental_Emisores (main)

@@ -40,32 +40,61 @@ def mover(origen: Path, destino: Path) -> Path:
 
 
 def parse_clave(clave: str) -> dict:
-    p = clave.split("|")
+    p = (clave or "").split("|")
 
-    if p[0] == "FACTURA":
+    if p[0] == "FACTURA" and len(p) >= 4:
         return {
             "tipo": "FACTURA",
             "ruc": p[1],
             "serie": p[2],
             "numero": p[3],
+            "banco": None,
+            "codigo": None,
         }
 
-    if p[0] == "GUIA":
+    if p[0] == "GUIA" and len(p) >= 4:
         return {
             "tipo": "GUIA_REMISION",
             "ruc": p[1],
             "serie": p[2],
             "numero": p[3],
+            "banco": None,
+            "codigo": None,
         }
 
-    if p[0] == "OC":
-        return {"tipo": "ORDEN_COMPRA", "numero": p[1]}
+    if p[0] == "NC" and len(p) >= 4:
+        return {
+            "tipo": "NOTA_CREDITO",
+            "ruc": p[1],
+            "serie": p[2],
+            "numero": p[3],
+            "banco": None,
+            "codigo": None,
+        }
 
-    if p[0] == "OS":
-        return {"tipo": "ORDEN_SERVICIO", "numero": p[1]}
+    if p[0] == "OC" and len(p) >= 2:
+        return {
+            "tipo": "ORDEN_COMPRA",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
 
-    if p[0] == "NI":
-        return {"tipo": "NOTA_INGRESO", "numero": p[1]}
+    if p[0] == "OS" and len(p) >= 2:
+        return {
+            "tipo": "ORDEN_SERVICIO",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
+
+    if p[0] == "NI" and len(p) >= 2:
+        return {
+            "tipo": "NOTA_INGRESO",
+            "numero": p[1],
+            "banco": None,
+            "codigo": None,
+        }
 
     if p[0] == "PAGO_TRANSFERENCIA":
         return {
@@ -81,6 +110,8 @@ def parse_clave(clave: str) -> dict:
                 "ruc": p[1],
                 "serie": p[2],
                 "numero": p[3],
+                "banco": "BN",
+                "codigo": None,
             }
 
         return {
@@ -89,7 +120,20 @@ def parse_clave(clave: str) -> dict:
             "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
         }
 
-    return {"tipo": "OTRO"}
+    if p[0] == "OTRO":
+        return {
+            "tipo": "OTRO",
+            "numero": p[1] if len(p) > 1 else "SIN_ASIENTO",
+            "codigo": p[2] if len(p) > 2 else "SIN_CODIGO",
+            "banco": None,
+        }
+
+    return {
+        "tipo": "OTRO",
+        "numero": "SIN_ASIENTO",
+        "codigo": "SIN_CODIGO",
+        "banco": None,
+    }
 
 
 def obtener_razones(cliente: str, year: int, month: int) -> dict:
